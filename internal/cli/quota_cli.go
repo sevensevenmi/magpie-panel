@@ -87,6 +87,12 @@ const quotaUsage = `usage: magpie quota [<provider>…] [--json]
   never does. A card read less than 30 seconds ago isn't asked again: what was read
   then is shown.`
 
+// quotaDeadline is how long magpie quota waits for the vendors. A read of
+// the subscriptions' allowances can outlast it (one account's is bounded
+// at 20 seconds, a saved Claude account's at 45), so past it what the read
+// has landed is told rather than nothing (#7742).
+var quotaDeadline = 15 * time.Second
+
 // quotaCmd: magpie quota [<provider>…] [--json]
 func quotaCmd(args []string) error {
 	if len(args) > 1 && args[1] == "reset" {
@@ -125,16 +131,27 @@ func quotaCmd(args []string) error {
 	}
 	// magpie quota is the user asking: read even when allowances are read
 	// only when asked (#1518)
-	ctx, cancel := context.WithTimeout(provider.Asked(context.Background()), 15*time.Second)
+	ctx, cancel := context.WithTimeout(provider.Asked(context.Background()), quotaDeadline)
 	defer cancel()
 	qs := []provider.Quota{}
 	provider.AskClaudeUsage()
-	for _, q := range provider.QuotaReport(ctx, time.Now()) {
+	report := provider.QuotaReport(ctx, time.Now())
+	// The first reading of the subscriptions' allowances comes back all at
+	// once or, past the deadline, not at all: one slow account's outlasts
+	// it, and every account was told nothing then (#7742). What the read
+	// had landed is told, and for the rest what was last read of them.
+	cut := ctx.Err() != nil
+	if cut {
+		report = append(slices.DeleteFunc(slices.Clone(report), func(q provider.Quota) bool {
+			return q.Kind == "subscription" && q.From == ""
+		}), provider.LandedQuotaReport(time.Now())...)
+	}
+	for _, q := range report {
 		if len(only) == 0 || quotaMatches(q, only) {
 			qs = append(qs, q)
 		}
 	}
-	qs, err := withUntold(qs, only)
+	qs, err := withUntold(qs, only, cut)
 	if err != nil {
 		return err
 	}
@@ -680,8 +697,9 @@ func quotaMatches(q provider.Quota, only []string) bool {
 
 // withUntold adds a line for each provider named that told nothing, saying
 // why, rather than leaving it out as if it weren't there; a name that is no
-// provider at all is an error.
-func withUntold(qs []provider.Quota, only []string) ([]provider.Quota, error) {
+// provider at all is an error. cut is magpie quota having stopped waiting
+// while the subscriptions' allowances were still being read.
+func withUntold(qs []provider.Quota, only []string, cut bool) ([]provider.Quota, error) {
 	for _, o := range only {
 		if o == "subscription" || o == "plan" || o == "balance" || slices.ContainsFunc(qs, func(q provider.Quota) bool { return quotaMatches(q, []string{o}) }) {
 			continue
@@ -689,6 +707,15 @@ func withUntold(qs []provider.Quota, only []string) ([]provider.Quota, error) {
 		p, err := provider.Find(o)
 		if err != nil {
 			return nil, err
+		}
+		// a subscription magpie is signed in to whose card neither landed
+		// nor was read before isn't "not configured", which sends the user
+		// to set a balance URL: it has none. One switched off, or whose
+		// account was removed, isn't being read, and keeps the line below.
+		if cut && !p.Off && !p.Hidden && provider.SignedInProvider(p.ID) {
+			qs = append(qs, provider.Quota{Provider: p.ID, Name: p.Name, Kind: "subscription", Windows: []provider.QuotaSpan{},
+				Error: fmt.Sprintf("not read in time · its allowance was still being read when magpie quota's %s ran out, and none was read of it before; ask again, or while the app runs ask its gateway: GET /v1/magpie/quotas", quotaDeadline)})
+			continue
 		}
 		qs = append(qs, provider.Quota{Provider: p.ID, Name: p.Name, Kind: "balance", Windows: []provider.QuotaSpan{},
 			Error: "not configured · no balance endpoint known for it; set Balance URL and Balance field in its editor"})

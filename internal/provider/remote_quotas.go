@@ -146,6 +146,11 @@ func CachedCards(now time.Time) []SubscriptionQuota {
 	c.Lock()
 	data := c.data
 	c.Unlock()
+	return cardsOf(data, now)
+}
+
+// cardsOf is CachedCards over data in place of the page's own cards.
+func cardsOf(data []SubscriptionQuota, now time.Time) []SubscriptionQuota {
 	subs := withDailyCredits(visibleQuotas(withAccountReadings(data)), now)
 	p := &planQuotaCache
 	p.Lock()

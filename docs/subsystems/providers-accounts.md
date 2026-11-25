@@ -466,8 +466,19 @@ request failed. Network failures, unavailable `/usage` and account refusals
 are not deferred reads. A failed read that an old reading stands in for
 carries its error as `readError`, which the GUI shows after the date, so
 a stand-in that lasts days still says why. Both fields also reach
-`magpie quota --json` and the gateway report. [`quota_last.go`](../../internal/provider/quota_last.go),
-`TestQuotaDeferredReadIsNotFailure`.
+`magpie quota --json` and the gateway report. `magpie quota` waits its own
+15 seconds (`quotaDeadline`); a first reading of the subscriptions'
+allowances that outlasts it (one account's read is bounded at 20 seconds,
+a saved Claude account's at 45) is not told as nothing, as if no account
+were there: the cards the read had landed are told as read now and the
+rest as last read (`LandedQuotaReport`), and a signed-in subscription
+read of neither says "not read in time" rather than a balance's "not
+configured", which sends the user to set a balance URL a subscription has
+no use for (#7742). [`quota_last.go`](../../internal/provider/quota_last.go),
+[`subscription_usage.go`](../../internal/provider/subscription_usage.go),
+[`quotas.go`](../../internal/provider/quotas.go),
+[`quota_cli.go`](../../internal/cli/quota_cli.go),
+`TestQuotaDeferredReadIsNotFailure`, `TestQuotaCutTellsWhatWasRead`.
 
 Allowance readings are kept by provider, lowercased account and window in
 `quota-history.json` ([`quota_history.go`](../../internal/provider/quota_history.go)),

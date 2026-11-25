@@ -108,6 +108,16 @@ func cardLogins() []Login {
 	return out
 }
 
+// SignedInProvider says the Usage page has an account of the provider by
+// that id to read the allowance of (cardLogins): a subscription magpie is
+// signed in to, by the agent's id for a built-in and the provider's for a
+// plugin's. magpie quota asks, so that a provider whose card a read hadn't
+// landed isn't told "not configured" (#7742). False for a key's plan or
+// balance, and for a plugin that tells no usage.
+func SignedInProvider(id string) bool {
+	return slices.ContainsFunc(cardLogins(), func(l Login) bool { return loginProvider(l) == id })
+}
+
 // withAccountReadings is cards with each account's latest reading, made
 // for the Usage page or behind it (LoginUsage), in place of an older
 // one. An account without a card gets one, from its reading, else from

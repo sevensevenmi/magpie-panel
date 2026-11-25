@@ -317,6 +317,11 @@ var subscriptionUsageCache struct {
 	data    []SubscriptionQuota
 	pending chan struct{} // closed when the refresh in flight is done
 	asked   bool          // the user asked (AskClaudeUsage): wait for the refresh
+	// landing is what the refresh in flight has read so far, each card as
+	// it landed: a first reading waits for every account at once, and a
+	// caller that stops waiting first is told these rather than nothing
+	// (LandedQuotaReport, #7742)
+	landing []SubscriptionQuota
 }
 
 // OnSubscriptionUsage sets what is told when a refresh has landed, for what
@@ -371,12 +376,17 @@ func SubscriptionUsage(ctx context.Context) []SubscriptionQuota {
 	}
 	if !fresh && c.pending == nil {
 		done := make(chan struct{})
-		c.pending = done
+		c.pending, c.landing = done, nil
 		bg := context.Background()
 		if wasAsked(ctx) {
 			bg = Asked(bg)
 		}
 		readCtx, seq := quotaReading(bg)
+		readCtx = landing(readCtx, func(q SubscriptionQuota) {
+			c.Lock()
+			c.landing = append(c.landing, q)
+			c.Unlock()
+		})
 		asked := claudeAskGeneration.Load()
 		goRead(func() {
 			out := fetchSubscriptionUsage(readCtx)
@@ -384,7 +394,7 @@ func SubscriptionUsage(ctx context.Context) []SubscriptionQuota {
 			noteCardHistory(out, time.Now())
 			c.Lock()
 			c.data = cacheCards(c.data, out, seq, false)
-			c.at, c.pending = time.Now(), nil
+			c.at, c.pending, c.landing = time.Now(), nil, nil
 			if claudeAskGeneration.Load() != asked {
 				c.at = time.Time{} // asked meanwhile: read again
 			}
@@ -658,13 +668,32 @@ func fetchSubscriptionUsage(ctx context.Context) []SubscriptionQuota {
 	// each fetch keeps what it read (keepLast) itself: an account's
 	// reading, shared with LoginUsage, is kept once
 	out := make([]SubscriptionQuota, len(fetches))
+	land, _ := ctx.Value(landingKey{}).(func(SubscriptionQuota))
 	var wg sync.WaitGroup
 	for i, f := range fetches {
 		wg.Add(1)
-		go func() { defer wg.Done(); out[i] = f() }()
+		go func() {
+			defer wg.Done()
+			out[i] = f()
+			if land != nil {
+				land(out[i])
+			}
+		}()
 	}
 	wg.Wait()
 	return out
+}
+
+type landingKey struct{}
+
+// landing is ctx with how a whole read is told each of its cards as it
+// lands, stamped with the read's order as cacheCards stamps it, so it
+// stands in place of the card kept before it (#7742).
+func landing(ctx context.Context, tell func(SubscriptionQuota)) context.Context {
+	return context.WithValue(ctx, landingKey{}, func(q SubscriptionQuota) {
+		q.readSeq, _ = ctx.Value(quotaReadKey{}).(uint64)
+		tell(q)
+	})
 }
 
 // accountsOf is every account magpie remembers for agent, the one it is

@@ -192,6 +192,32 @@ func KeptQuotaReport(now time.Time) []Quota {
 	return withServed(quotaReport(subs, plans, balances, now), LastServed())
 }
 
+// LandedQuotaReport is the subscription cards of QuotaReport as far as the
+// read of the accounts' usage has landed, for a caller that stopped
+// waiting for the first reading before it was done. That reading waits
+// for every account at once and tells such a caller nothing, the accounts
+// that had answered included (SubscriptionUsage): magpie quota at its
+// deadline, where one slow account's read outlasts it (#7742). Each card
+// the read has landed is told as read now; for an account it is still
+// reading, what was last read of it, as of when, as KeptQuotaReport tells
+// it. With no read under way the cards are KeptQuotaReport's. No vendor
+// is asked, and no read is started.
+func LandedQuotaReport(now time.Time) []Quota {
+	c := &subscriptionUsageCache
+	c.Lock()
+	data, pending, landed := c.data, c.pending, slices.Clone(c.landing)
+	c.Unlock()
+	if pending != nil && len(landed) > 0 {
+		if data == nil {
+			data = landed
+		} else {
+			data = mergeCards(data, landed)
+		}
+	}
+	cards := slices.DeleteFunc(slices.Clone(cardsOf(data, now)), func(q SubscriptionQuota) bool { return q.Kind != "subscription" })
+	return withServed(quotaReport(cards, nil, nil, now), LastServed())
+}
+
 // quotaReport assembles the cards from readings the tests feed directly.
 func quotaReport(subs, plans, balances []SubscriptionQuota, now time.Time) []Quota {
 	if ReckonHolds != nil { // one pass over the log for every card
