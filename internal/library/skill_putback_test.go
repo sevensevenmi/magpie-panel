@@ -34,6 +34,7 @@ func TestRemovedImportGoesBackToTheAgents(t *testing.T) {
 
 	ok(t)(ImportSkill("notes"))
 	v, _ := Read(nil)
+	t.Logf("notes home after import: %+v", v.Skills[0].Home)
 	if len(v.Skills) != 1 || !slices.Equal(v.Skills[0].Back, []string{"claude", "codex", "gemini"}) {
 		t.Fatalf("skills: %+v", v.Skills)
 	}
@@ -89,6 +90,8 @@ func TestRemovedLinkedImportGoesBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	ok(t)(ImportSkill("dev"))
+	v, _ := Read(nil)
+	t.Logf("dev home after import: %+v", v.Skills[0].Home)
 	if !ours(entry, "dev") {
 		t.Fatal("claude wasn't given the library's")
 	}
@@ -99,7 +102,7 @@ func TestRemovedLinkedImportGoesBack(t *testing.T) {
 	if read(t, filepath.Join(dev, "SKILL.md")) == "" {
 		t.Error("the folder elsewhere is gone")
 	}
-	v, _ := Read(nil)
+	v, _ = Read(nil)
 	if len(v.FoundSkills) != 1 || !slices.Equal(v.FoundSkills[0].Agents, []string{"claude"}) {
 		t.Fatalf("found: %+v", v.FoundSkills)
 	}

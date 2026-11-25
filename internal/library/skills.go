@@ -825,6 +825,9 @@ func (l *Library) syncSkills(t *Target, res *Result, all []*Target) {
 		}
 		owned := ours(p, name)
 		if !owned && (s == nil || s.Dangling) {
+			if to, ok := linkTarget(p); ok {
+				fmt.Printf("library debug: applied skill %s at %s links to %s; skill is %+v\n", name, p, to, s)
+			}
 			// A junction to a missing target cannot be read back on
 			// Windows, so ours cannot identify it. Applied still records
 			// that magpie wrote this entry; when its skill is gone or
