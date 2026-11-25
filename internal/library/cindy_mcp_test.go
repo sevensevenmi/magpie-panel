@@ -3,11 +3,25 @@ package library
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	toml "github.com/pelletier/go-toml/v2"
 )
+
+// cindyApp plants the app bundle the Mac's detection now requires. The
+// data folder alone is an uninstall's leftover there, while Linux and
+// Windows keep finding Cindy by the folder (#7766).
+func cindyApp(t *testing.T, h, bundle string) {
+	t.Helper()
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	write(t, filepath.Join(h, "Applications", "Cindy.app", "Contents", "Info.plist"),
+		"<plist><dict><key>CFBundleIdentifier</key><string>"+bundle+
+			"</string><key>CFBundleShortVersionString</key><string>0.1.94</string></dict></plist>")
+}
 
 // sunset on Discord: the Library's MCP servers never reached a Codex
 // session in Cindy. Cindy runs its Codex with CODEX_HOME at codex-home in
@@ -22,6 +36,7 @@ func TestCindyMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cindyApp(t, h, "com.xd.cindy")
 	p := filepath.Join(cfg, "CindyGlobal", "codex-home", "config.toml")
 	user := "[plugins.\"browser@openai-bundled\"]\nenabled = true\n\n[mcp_servers.mine]\ncommand = \"uvx\"\nargs = [\"mine\"]\n"
 	write(t, p, user)
@@ -83,6 +98,7 @@ func TestCindyMCPBeforeCodexRan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cindyApp(t, h, "com.xd.cindycn")
 	dir := filepath.Join(cfg, "Cindy")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

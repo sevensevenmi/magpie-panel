@@ -21,6 +21,7 @@ func TestCindyPiMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cindyApp(t, h, "com.xd.cindycn")
 	dir := filepath.Join(cfg, "Cindy")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
