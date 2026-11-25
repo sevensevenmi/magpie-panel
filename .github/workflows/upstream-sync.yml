@@ -1,0 +1,52 @@
+name: upstream-sync
+
+on:
+  schedule:
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: panel-write
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'L0NE-6/magpie-panel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out panel
+        uses: actions/checkout@v4
+        with:
+          ref: panel
+          fetch-depth: 0
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/yetone/magpie.git
+      - name: Fetch upstream main
+        run: git fetch --no-tags upstream main:refs/remotes/upstream/main
+      - name: Fast-forward main mirror
+        run: |
+          git switch --force-create main --track origin/main
+          git merge --ff-only upstream/main
+      - name: Merge main into panel
+        run: |
+          git switch --force-create panel --track origin/panel
+          if ! git merge --no-edit main; then
+            echo "::error title=Upstream merge conflict::Resolve conflicts on panel and rerun; no push was attempted."
+            git status --short
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+      - name: Check merged tree
+        run: |
+          git diff --check
+          gofmt -l $(git ls-files '*.go') | tee /tmp/gofmt.out
+          test ! -s /tmp/gofmt.out
+      - name: Push main mirror and panel atomically
+        run: git push --atomic origin main:main panel:panel

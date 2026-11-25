@@ -30,12 +30,5 @@ workflow, and verified local integrations.
 
 - A PR being mergeable is not proof that its behavior is safe.
 - A local panel integration is not an upstream merge.
-- Do not claim macOS Office, Windows, Linux signal, or real-agent behavior
-  unless that environment was actually exercised.
+- Do not claim macOS Office, Windows, Linux signal, or real-agent behavior unless that environment was actually exercised.
 - The fork never publishes upstream releases or distribution channels.
-
-## Next Batch
-
-1. `#1258` signal handling and Linux drain tests.
-2. `#1331` local HTTPS certificate lifecycle and trust-store review.
-3. `#1033` Reasonix sessions with a real binary check.
