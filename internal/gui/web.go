@@ -72,6 +72,7 @@ type Web struct {
 	key                 string
 	srv                 *http.Server
 	quit                chan struct{}
+	quitOnce            sync.Once
 }
 
 // webReexec is set when the page's restart to update has put the new
@@ -118,8 +119,7 @@ func StartWeb(addr, version string) (*Web, error) {
 	if ip := net.ParseIP(host); ip == nil || ip.IsUnspecified() {
 		host = "127.0.0.1"
 	}
-	var once sync.Once
-	quit := func() { once.Do(func() { close(w.quit) }) }
+	quit := w.Quit
 	// on loopback the page takes plain HTTP with TLS on too, which a
 	// browser here opens without a certificate for 127.0.0.1
 	scheme := "http"
@@ -171,6 +171,13 @@ func (w *Web) Wait() error {
 	// End and reap plugin hosts before replacing this process (#3285).
 	plugin.EndHosts()
 	return update.Reexec(exe, os.Args[1:], append(os.Environ(), webRunKey+"="+w.key))
+}
+
+// Quit asks Wait to close the page and return. It is idempotent, and is
+// used by the page's own Quit action and by a signal that has drained the
+// gateway.
+func (w *Web) Quit() {
+	w.quitOnce.Do(func() { close(w.quit) })
 }
 
 // Close stops the web page and waits for this process's gateway to save its sessions.

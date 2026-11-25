@@ -6,7 +6,10 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/yetone/magpie/internal/agent"
@@ -88,11 +91,7 @@ func webCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	// a SIGTERM drains, as serve's (serve_drain.go)
-	defer stopGatewayOnSignalAs(func(sig os.Signal) {
-		drainOnSignal(gui.ServedGateway(), sig)
-		w.Close()
-	})()
+	defer stopWebOnSignals(w)()
 	if !w.ServesGateway() {
 		// another magpie has the gateway (the service, magpie serve, the
 		// app): this page shows its settings and accounts, read from the
@@ -253,11 +252,7 @@ func serveCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	// a SIGTERM drains, as serve's (serve_drain.go)
-	defer stopGatewayOnSignalAs(func(sig os.Signal) {
-		drainOnSignal(gui.ServedGateway(), sig)
-		w.Close()
-	})()
+	defer stopWebOnSignals(w)()
 	public := advertisedURL()
 	fmt.Println(green.Render("●"), "magpie gateway on", bold.Render(gateway.URL()))
 	fmt.Println(muted.Render("  OpenAI  "), public+"/v1/chat/completions", muted.Render("·"), public+"/v1/responses")
@@ -270,4 +265,36 @@ func serveCmd(args []string) error {
 	}
 	printWeb(w)
 	return w.Wait()
+}
+
+// stopWebOnSignals lets SIGINT and SIGTERM finish through the web page's
+// return path, after a SIGTERM has drained the gateway it serves. SIGHUP
+// stays with Main's handler: a terminal closing still ends the process the
+// way it did before. The returned cleanup stops the local signal watcher
+// and the page, and is safe to call when a signal already stopped it.
+func stopWebOnSignals(w *gui.Web) func() {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	ownSignals()
+	var stopOnce sync.Once
+	stopWeb := func(sig os.Signal) {
+		stopOnce.Do(func() {
+			drainOnSignal(gui.ServedGateway(), sig)
+			w.Quit()
+		})
+	}
+	stopGateway := stopGatewayOnSignalAs(stopWeb)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case sig := <-signals:
+			stopWeb(sig)
+		case <-done:
+		}
+	}()
+	return func() {
+		stopGateway()
+		signal.Stop(signals)
+		close(done)
+	}
 }

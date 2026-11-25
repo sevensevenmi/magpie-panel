@@ -30,6 +30,17 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	// With MAGPIE_CLI_TEST_WEB_SHUTDOWN set, run the real web command in
+	// this test binary, so signal tests exercise Main's handlers too.
+	if os.Getenv("MAGPIE_CLI_TEST_WEB_SHUTDOWN") != "" {
+		if os.Getenv(testenv.Marker) == "" {
+			os.Exit(2)
+		}
+		testenv.Offline()
+		os.Args = []string{"magpie", "web", "--addr", "127.0.0.1:0", "--no-open"}
+		Main("0.1.9999")
+		os.Exit(8) // Main ends the process
+	}
 	// With MAGPIE_CLI_TEST_HOST_EXIT set, it starts a plugin host and
 	// ends as magpie does (plugin_host_exit_cli_test.go).
 	if how := os.Getenv(hostExitEnv); how != "" {
