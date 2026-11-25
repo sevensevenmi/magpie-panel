@@ -105,7 +105,8 @@ func TestOmpModelsAskedOnTheirNativeAPI(t *testing.T) {
 // Google client its "N/A" no-auth key, which it sends as x-goog-api-key and
 // loopback takes, so the provider stays keyless. Gemini 3 thinks by
 // thinkingLevel (google-level), 2.5 by a budget, which refuses a level. A
-// model the provider serves on Chat, and a group, stay on Chat.
+// model the provider serves on Chat stays on Chat, while a group every
+// member of which is on Gemini's API goes there too.
 func TestOmpGeminiModelsAskedOnGeminisAPI(t *testing.T) {
 	home := syncHome(t)
 	was := ompVersion
@@ -157,7 +158,7 @@ func TestOmpGeminiModelsAskedOnGeminisAPI(t *testing.T) {
 		"gem/gemini-2.5-pro":    "google-generative-ai",
 		"hybrid/gemini-3-flash": "google-generative-ai",
 		"hybrid/gemini-2.5-pro": nil,
-		"group/geminis":         nil,
+		"group/geminis":         "google-generative-ai",
 	} {
 		e, ok := entries[id]
 		if !ok {
@@ -175,7 +176,7 @@ func TestOmpGeminiModelsAskedOnGeminisAPI(t *testing.T) {
 			t.Errorf("%s: baseUrl %v, want %s/v1beta", id, e["baseUrl"], gateway.URL())
 		}
 	}
-	for id, mode := range map[string]string{"gem/gemini-3-flash": "google-level", "gem/gemini-2.5-pro": "budget"} {
+	for id, mode := range map[string]string{"gem/gemini-3-flash": "google-level", "gem/gemini-2.5-pro": "budget", "group/geminis": "google-level"} {
 		th, _ := entries[id]["thinking"].(map[string]any)
 		if th["mode"] != mode || fmt.Sprint(th["efforts"]) != "[minimal low medium high]" {
 			t.Errorf("%s: thinking %v, want mode %s", id, entries[id]["thinking"], mode)
