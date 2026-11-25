@@ -4,12 +4,14 @@ Snapshot: 2026-11-26. Upstream remains
 [`yetone/magpie`](https://github.com/yetone/magpie). The fork `main` is an
 exact mirror; `panel` contains maintenance documentation, the upstream-sync
 workflow, and verified local integrations. Upstream `main` is at
-`1f5b883a`.
+`6346f383`.
 
 ## Upstream Sync
 
 The panel now also includes the latest upstream changes:
 
+- `6346f383`: a private-network Remote magpie address proves it holds the
+  gateway key before a keyed request is sent to it;
 - `1f5b883a`: a Remote magpie can keep alternate LAN, Tailscale or EasyTier
   addresses and ask the one that answers;
 - `eb8402c3`: a remote magpie's dropped routing pick stays dropped after an
