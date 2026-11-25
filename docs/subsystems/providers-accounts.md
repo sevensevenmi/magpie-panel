@@ -171,6 +171,13 @@ magpie its provider for them, and a remote with no Codex cache of its own
 hands on entries made from the bundled instructions, without the
 backend's other fields.
 
+A remote card also carries `freeModels`, the vendor-marked free model ids
+for its whole-key/account windows. The receiving magpie applies that set
+when it lays the card's routing facts back on the windows; an older card
+without the field keeps the previous whole-window behavior. The set is
+built from Cline/Kilo/OpenRouter markers and never from an arbitrary `$0`
+price or the user's Count as free.
+
 `DecidesModel` uses the remote's explicit decision marker, so Clef and custom
 names work and a chat model named Jev Router stays a chat model. `Deciders`
 lists, and the gateway answers, these decisions even when the user's local

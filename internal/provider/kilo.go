@@ -57,6 +57,13 @@ func (p Provider) IsKilo() bool {
 	return h == "api.kilo.ai" || h == "api.kilocode.ai"
 }
 
+// kiloWindowed reports whether p's usage windows should leave Kilo's free
+// models out. Kilo's built-in gateway and its plugin account use the same
+// vendor marker.
+func (p Provider) kiloWindowed() bool {
+	return p.IsKilo() || p.PluginProvider() == "kilo"
+}
+
 // kiloModels is the gateway's list as Kilo's clients ask it (GET
 // {base}/models, kilo-gateway src/api/models.ts): OpenRouter's shape, with
 // isFree on the models it serves at no cost. Without a key only those are

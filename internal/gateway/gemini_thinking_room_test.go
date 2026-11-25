@@ -76,6 +76,14 @@ func replyLimitOf(q map[string]any) int {
 	return -1
 }
 
+// reasoningEffortOf is OpenRouter's unified reasoning.effort, or "" when
+// the request did not name one.
+func reasoningEffortOf(q map[string]any) string {
+	r, _ := q["reasoning"].(map[string]any)
+	e, _ := r["effort"].(string)
+	return e
+}
+
 // fwxkogaia on X (v0.1.4697): Nowledge Mem asked models/gemini-4-hydrogen
 // at Google AI Studio with max_tokens 8192 and no reasoning. Gemini 4
 // Hydrogen thinks at high by default and the limit counts its thoughts, so
@@ -84,7 +92,8 @@ func replyLimitOf(q map[string]any) int {
 // that thinks by default, on Google's own routes, with no reasoning asked,
 // has room to think above it, as Tencent's DeepSeek has. Reasoning asked,
 // the user's own Max output, a large limit, a Flash-Lite, a Gemini client's
-// own maxOutputTokens, OpenRouter's Gemini and a relay's go as they came.
+// own maxOutputTokens and a relay's go as they came; OpenRouter's Gemini
+// keeps its limit and gets a low reasoning effort instead.
 func TestGeminiCapGetsThinkingRoom(t *testing.T) {
 	fresh(t)
 	u := &geminiRoomUpstream{}
@@ -117,31 +126,33 @@ func TestGeminiCapGetsThinkingRoom(t *testing.T) {
 	}
 	const room = 24000 // replyRoom at high
 	for _, c := range []struct {
-		name string
-		ask  [2]string
-		want int
+		name          string
+		ask           [2]string
+		want          int
+		wantReasoning string
 	}{
 		// the reporter's request, as Nowledge Mem sends it
-		{"mem's 8192", chat("google/models/gemini-4-hydrogen", `"max_tokens":8192,"temperature":0.7,`), 8192 + room},
-		{"no models/ prefix", chat("google/gemini-4-hydrogen", `"max_tokens":8192,`), 8192 + room},
-		{"max_completion_tokens", chat("google/gemini-4-hydrogen", `"max_completion_tokens":4096,`), 4096 + room},
-		{"2.5 pro", chat("google/gemini-2.5-pro", `"max_tokens":8192,`), 8192 + room},
-		{"responses", [2]string{"/v1/responses", `{"model":"google/gemini-4-hydrogen","max_output_tokens":8192,"input":"hi"}`}, 8192 + room},
-		{"messages", [2]string{"/v1/messages", `{"model":"google/gemini-4-hydrogen","max_tokens":8192,` + msgs + `}`}, 8192 + room},
-		{"gemini api, chat client", chat("gnative/gemini-4-hydrogen", `"max_tokens":8192,`), 8192 + room},
-		{"effort asked", chat("google/gemini-4-hydrogen", `"max_tokens":8192,"reasoning_effort":"low",`), 8192},
-		{"thinking_config asked", chat("google/gemini-4-hydrogen", `"max_tokens":8192,"extra_body":{"google":{"thinking_config":{"thinking_level":"low"}}},`), 8192},
-		{"messages thinking", [2]string{"/v1/messages", `{"model":"google/gemini-4-hydrogen","max_tokens":8192,"thinking":{"type":"enabled","budget_tokens":2048},` + msgs + `}`}, 8192},
-		{"messages thinking off", [2]string{"/v1/messages", `{"model":"google/gemini-4-hydrogen","max_tokens":8192,"thinking":{"type":"disabled"},` + msgs + `}`}, 8192},
-		{"user's max output", chat("google/gemini-4-argon", `"max_tokens":8192,`), 8192},
-		{"a large limit", chat("google/gemini-4-hydrogen", `"max_tokens":32000,`), 32000},
-		{"no limit", chat("google/gemini-4-hydrogen", ``), -1},
-		{"flash-lite", chat("google/gemini-3.5-flash-lite", `"max_tokens":8192,`), 8192},
-		{"gemini client's own", [2]string{"/v1beta/models/gnative/gemini-4-hydrogen:generateContent", `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":8192}}`}, 8192},
-		{"openrouter's gemini", chat("or/google/gemini-4-hydrogen", `"max_tokens":8192,`), 8192},
-		{"a relay's gemini", chat("relay/gemini-4-hydrogen", `"max_tokens":8192,`), 8192},
+		{"mem's 8192", chat("google/models/gemini-4-hydrogen", `"max_tokens":8192,"temperature":0.7,`), 8192 + room, ""},
+		{"no models/ prefix", chat("google/gemini-4-hydrogen", `"max_tokens":8192,`), 8192 + room, ""},
+		{"max_completion_tokens", chat("google/gemini-4-hydrogen", `"max_completion_tokens":4096,`), 4096 + room, ""},
+		{"2.5 pro", chat("google/gemini-2.5-pro", `"max_tokens":8192,`), 8192 + room, ""},
+		{"responses", [2]string{"/v1/responses", `{"model":"google/gemini-4-hydrogen","max_output_tokens":8192,"input":"hi"}`}, 8192 + room, ""},
+		{"messages", [2]string{"/v1/messages", `{"model":"google/gemini-4-hydrogen","max_tokens":8192,` + msgs + `}`}, 8192 + room, ""},
+		{"gemini api, chat client", chat("gnative/gemini-4-hydrogen", `"max_tokens":8192,`), 8192 + room, ""},
+		{"effort asked", chat("google/gemini-4-hydrogen", `"max_tokens":8192,"reasoning_effort":"low",`), 8192, ""},
+		{"thinking_config asked", chat("google/gemini-4-hydrogen", `"max_tokens":8192,"extra_body":{"google":{"thinking_config":{"thinking_level":"low"}}},`), 8192, ""},
+		{"messages thinking", [2]string{"/v1/messages", `{"model":"google/gemini-4-hydrogen","max_tokens":8192,"thinking":{"type":"enabled","budget_tokens":2048},` + msgs + `}`}, 8192, ""},
+		{"messages thinking off", [2]string{"/v1/messages", `{"model":"google/gemini-4-hydrogen","max_tokens":8192,"thinking":{"type":"disabled"},` + msgs + `}`}, 8192, ""},
+		{"user's max output", chat("google/gemini-4-argon", `"max_tokens":8192,`), 8192, ""},
+		{"a large limit", chat("google/gemini-4-hydrogen", `"max_tokens":32000,`), 32000, ""},
+		{"no limit", chat("google/gemini-4-hydrogen", ``), -1, ""},
+		{"flash-lite", chat("google/gemini-3.5-flash-lite", `"max_tokens":8192,`), 8192, ""},
+		{"gemini client's own", [2]string{"/v1beta/models/gnative/gemini-4-hydrogen:generateContent", `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":8192}}`}, 8192, ""},
+		{"openrouter's gemini", chat("or/google/gemini-4-hydrogen", `"max_tokens":8192,`), 8192, "low"},
+		{"openrouter's gemini reasoning", chat("or/google/gemini-4-hydrogen", `"max_tokens":8192,"reasoning":{"effort":"high"},`), 8192, "high"},
+		{"a relay's gemini", chat("relay/gemini-4-hydrogen", `"max_tokens":8192,`), 8192, ""},
 		// an Anthropic client is read the same way for Tencent's DeepSeek
-		{"messages to tencent's deepseek", [2]string{"/v1/messages", `{"model":"tencent/deepseek/deepseek-flash","max_tokens":4096,` + msgs + `}`}, 4096 + room},
+		{"messages to tencent's deepseek", [2]string{"/v1/messages", `{"model":"tencent/deepseek/deepseek-flash","max_tokens":4096,` + msgs + `}`}, 4096 + room, ""},
 	} {
 		if code, raw := postJSON(t, s, c.ask[0], c.ask[1]); code != 200 {
 			t.Fatalf("%s: %d %s", c.name, code, raw)
@@ -152,6 +163,28 @@ func TestGeminiCapGetsThinkingRoom(t *testing.T) {
 		}
 		if n := replyLimitOf(got[0]); n != c.want {
 			t.Errorf("%s: reply limit %d at %s, want %d", c.name, n, path[0], c.want)
+		}
+		if effort := reasoningEffortOf(got[0]); effort != c.wantReasoning {
+			t.Errorf("%s: reasoning effort %q, want %q", c.name, effort, c.wantReasoning)
+		}
+	}
+}
+
+func TestOpenRouterReasoningCapResponses(t *testing.T) {
+	p := provider.Provider{ID: "or", Preset: "openrouter", Chat: "https://openrouter.ai/api/v1"}
+	body := []byte(`{"model":"google/gemini-4-hydrogen","max_output_tokens":8192,"input":"hi"}`)
+	var q map[string]any
+	if err := json.Unmarshal(withOpenRouterReasoningCap(p, "google/gemini-4-hydrogen", provider.Responses, body), &q); err != nil {
+		t.Fatal(err)
+	}
+	if q["max_output_tokens"] != float64(8192) || reasoningEffortOf(q) != "low" {
+		t.Fatalf("Responses cap: %+v", q)
+	}
+	for _, asked := range []string{
+		`{"model":"google/gemini-4-hydrogen","max_output_tokens":8192,"reasoning":{"effort":"high"},"input":"hi"}`,
+	} {
+		if got := string(withOpenRouterReasoningCap(p, "google/gemini-4-hydrogen", provider.Responses, []byte(asked))); got != asked {
+			t.Errorf("asked reasoning changed:\n got %s\nwant %s", got, asked)
 		}
 	}
 }

@@ -124,8 +124,14 @@ func pluginLoginQuota(ctx context.Context, l Login) SubscriptionQuota {
 		notePluginLapseSince(pp, key, http.StatusOK, began)
 	}
 	keepPluginPlan(pp, key, u.Plan)
+	q = namedModelWindows(quotaOfPlugin(q, u), pp.Models)
+	if p, err := Find(q.Provider); err == nil {
+		// Cline and Kilo account windows have the same free-model scope as
+		// their keys. A window already scoped to a model or pool stays so.
+		q.Windows = p.paidOnly(q.Windows)
+	}
 	// a wallet's spend counted, for a cap to hold it (#5770)
-	return withWalletSpend(namedModelWindows(quotaOfPlugin(q, u), pp.Models), l.User, time.Now())
+	return withWalletSpend(q, l.User, time.Now())
 }
 
 // namedModelWindows scopes each window that says no models but is named

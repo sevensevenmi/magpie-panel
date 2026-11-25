@@ -27,7 +27,9 @@ package agent
 // POST /remote-llm/config saves a provider and always makes it the active
 // one; api_base and api_key left out keep what was stored, but
 // temperature, max_tokens and timeout left out go back to 0.7, 8192 and
-// 60, so the provider's own are sent again with every change.
+// 60, so the provider's own are sent again with every change. Magpie's own
+// provider gets a timeout of at least 120 seconds; a provider the user made
+// keeps its timeout.
 //
 // Picking a magpie model for Mem saves the provider "magpie" (type magpie)
 // at the gateway's /v1 with Mem's own agent key and that model, and turns
@@ -65,6 +67,11 @@ const memAddr = "http://127.0.0.1:14242"
 
 // memDefaultBase is where Mem's magpie type goes with no api_base.
 const memDefaultBase = "http://127.0.0.1:3425/v1"
+
+// memMagpieTimeout is the least client timeout magpie gives the provider it
+// manages. Mem's 60-second default can expire while a default-thinking Gemini
+// is still spending the raised reply limit on reasoning.
+const memMagpieTimeout = 120
 
 // errMemDown is a change asked of a Mem that isn't running.
 var errMemDown = errors.New("Nowledge Mem changes its AI only while it runs: open Nowledge Mem, then try again")
@@ -225,10 +232,10 @@ func nowledgeMem(home string) *Agent {
 			b, _ := json.Marshal(prev)
 			stash(map[string]string{keyPrev: string(b)})
 		}
-		body := memBody(had, magpieID, m)
-		body["api_base"] = gatewayV1()
 		var prev memPrev
 		json.Unmarshal([]byte(unstashPeek(keyPrev)), &prev)
+		body := memBody(had, magpieID, m, prev.Had == nil)
+		body["api_base"] = gatewayV1()
 		if prev.Had == nil {
 			// a key on the user's own "magpie" provider stays theirs
 			body["api_key"] = agentKey("nowledge-mem")
@@ -257,7 +264,7 @@ func nowledgeMem(home string) *Agent {
 			json.Unmarshal([]byte(raw), &prev)
 		}
 		if p, ok := s.Providers[magpieID]; ok && prev.Had != nil && prev.Had.Model != "" {
-			back := memBody(p, magpieID, prev.Had.Model)
+			back := memBody(p, magpieID, prev.Had.Model, false)
 			back["api_base"] = prev.Had.APIBase
 			for k, val := range map[string]any{"temperature": prev.Had.Temperature, "max_tokens": prev.Had.MaxTokens, "timeout": prev.Had.Timeout} {
 				if val != nil {
@@ -272,7 +279,7 @@ func nowledgeMem(home string) *Agent {
 		ours := s.Active == magpieID
 		if p, ok := s.Providers[prev.Active]; ok && prev.Active != magpieID && (ours || v != "") {
 			if v != "" && v != p.Model {
-				if err := c.post("/remote-llm/config", memBody(p, prev.Active, v)); err != nil {
+				if err := c.post("/remote-llm/config", memBody(p, prev.Active, v, false)); err != nil {
 					return err
 				}
 			} else if err := c.post("/remote-llm/activate", map[string]any{"provider": prev.Active}); err != nil {
@@ -314,7 +321,7 @@ func nowledgeMem(home string) *Agent {
 			if !on || !avibeMoved(memBase(p)) {
 				return nil
 			}
-			body := memBody(p, magpieID, p.Model)
+			body := memBody(p, magpieID, p.Model, unstashPeek(keyPrev) != "")
 			body["api_base"] = gatewayV1()
 			return c.post("/remote-llm/config", body)
 		},
@@ -383,7 +390,7 @@ func nowledgeMem(home string) *Agent {
 				if !ok {
 					return errors.New("Nowledge Mem has no AI of its own to use " + v + " with: pick one in its Settings > AI")
 				}
-				return c.post("/remote-llm/config", memBody(p, s.Active, v))
+				return c.post("/remote-llm/config", memBody(p, s.Active, v, false))
 			},
 			Options: func(cur map[string]string) []Option {
 				var own []Option
@@ -397,8 +404,10 @@ func nowledgeMem(home string) *Agent {
 }
 
 // memBody is the POST /remote-llm/config that saves provider id as p is,
-// with model m, its parameters sent again (left out, Mem resets them).
-func memBody(p memProvider, id, m string) map[string]any {
+// with model m, its parameters sent again (left out, Mem resets them). When
+// managed is true, id is magpie's own provider and its timeout is raised to
+// at least memMagpieTimeout; a user's own provider keeps its value.
+func memBody(p memProvider, id, m string, managed bool) map[string]any {
 	kind := p.kind()
 	if kind == "" {
 		kind = id
@@ -410,8 +419,15 @@ func memBody(p memProvider, id, m string) map[string]any {
 	if p.MaxTokens != nil {
 		body["max_tokens"] = *p.MaxTokens
 	}
+	timeout, hasTimeout := 0.0, p.Timeout != nil
 	if p.Timeout != nil {
-		body["timeout"] = *p.Timeout
+		timeout = *p.Timeout
+	}
+	if managed && id == magpieID && timeout < memMagpieTimeout {
+		timeout, hasTimeout = memMagpieTimeout, true
+	}
+	if hasTimeout {
+		body["timeout"] = timeout
 	}
 	return body
 }

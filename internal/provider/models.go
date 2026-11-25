@@ -2119,24 +2119,25 @@ func (p Provider) Thinks(model string) bool {
 
 // PaidBesideFree says model costs its subscription's credits while the
 // subscription serves other models at no cost to them (costsNothing:
-// WorkBuddy's "x0.00", Qoder's is_free, Cline's free models, OpenCode Go's
-// and Zen's). Its credits or windows running out then say nothing of
-// those: they draw on none (Creat.wu on Discord; Go's "If you reach the
-// usage limit, you can continue using the free models", #7496). False for
-// a model not on the list, or where no model is free.
+// WorkBuddy's "x0.00", Qoder's is_free, Cline's and Kilo's free models,
+// OpenCode Go's and Zen's, and OpenRouter's :free models). Its credits or
+// windows running out then say nothing of those: they draw on none
+// (Creat.wu on Discord; Go's "If you reach the usage limit, you can continue
+// using the free models", #7496). False for a model not on the list, or
+// where no model is free.
 func (p Provider) PaidBesideFree(model string) bool {
 	listed, free, freeToo, _ := p.freeBeside(model)
 	return listed && !free && freeToo
 }
 
-// FreeBesidePaid says model is one OpenCode serves at no cost
-// (costsNothing) beside models that cost: a refusal of it for credit or
-// quota is its own, as it draws on neither, and says nothing of the
-// others (ggbdpq, #7496). OpenCode's alone: WorkBuddy refuses even its
-// 0-rate models to an account with no package, a refusal of the account.
+// FreeBesidePaid says model is one of the vendors with a vendor free marker
+// serves at no cost beside models that cost: a refusal of it for credit or
+// quota is its own, as it draws on neither, and says nothing of the others
+// (ggbdpq, #7496). WorkBuddy is excluded: it refuses even its 0-rate models
+// to an account with no package, a refusal of the account.
 func (p Provider) FreeBesidePaid(model string) bool {
 	listed, free, _, paidToo := p.freeBeside(model)
-	return listed && free && paidToo && p.IsOpenCode()
+	return listed && free && paidToo && (p.IsOpenCode() || p.clineWindowed() || p.kiloWindowed() || p.IsOpenRouter())
 }
 
 // freeBeside is whether p lists model, whether it costs nothing there
@@ -2154,19 +2155,48 @@ func (p Provider) freeBeside(model string) (listed, free, freeToo, paidToo bool)
 			paidToo = true
 		}
 	}
+	if !listed && p.freeByVendorID(model) {
+		listed, free = true, true
+	}
 	return listed, free, freeToo, paidToo
 }
 
 // costsNothing says p serves m at no cost to its allowance or credits by
 // its vendor's word: catalog.Model's Free (WorkBuddy's "x0.00", Qoder's
-// is_free, Cline's free models, OpenCode Go's "monthly_usage": null), or,
-// at OpenCode, one of Zen's free models (OpenCodeFree) or of Go's
+// is_free, Cline's and Kilo's free models, OpenCode Go's "monthly_usage":
+// null), or, at OpenCode, one of Zen's free models (OpenCodeFree) or of Go's
 // (openCodeGoFree), for a list saved before Go's word was read from it.
+// OpenRouter's :free suffix is OpenRouter's own marker.
 // Not the user's CountFree, which says how Usage counts the provider and
 // nothing of what the vendor holds back, nor another vendor's $0 price:
 // a free tier priced 0 may still draw on the key's limits.
 func (p Provider) costsNothing(m catalog.Model) bool {
-	return m.Free || p.IsOpenCode() && (p.OpenCodeFree(m.ID) || p.openCodeGoFree(m.ID))
+	return m.Free || p.IsOpenCode() && (p.OpenCodeFree(m.ID) || p.openCodeGoFree(m.ID)) || p.freeByVendorID(m.ID)
+}
+
+// freeByVendorID reports the non-OpenCode vendor markers that survive a
+// list saved before the marker was read: Cline's cline-free/ ids and
+// fallback list, Kilo's :free and kilo-auto/free ids, and OpenRouter's
+// :free suffix. OpenCode's fallback is kept in costsNothing because its
+// ids are also used for models not present in the list.
+func (p Provider) freeByVendorID(model string) bool {
+	id := strings.ToLower(model)
+	return p.clineWindowed() && isClineFree(id) ||
+		p.kiloWindowed() && isKiloFree(id) ||
+		p.IsOpenRouter() && isOpenRouterFree(id)
+}
+
+// freeModelIDs are the model ids p serves at no cost by its vendor's marker,
+// lower-cased and sorted for a stable remote card.
+func (p Provider) freeModelIDs() []string {
+	var ids []string
+	for _, m := range p.Available() {
+		if p.costsNothing(m) {
+			ids = append(ids, strings.ToLower(m.ID))
+		}
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
 }
 
 // FreeModel says model costs nothing on p: its vendor serves it at no cost

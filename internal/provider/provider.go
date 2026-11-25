@@ -2553,6 +2553,23 @@ func (p Provider) Where() string {
 // not name one in x-opencode-session.
 func (p Provider) IsOpenCode() bool { return openCodeAt(p.Host()) }
 
+// IsOpenRouter reports whether the provider is OpenRouter's API. It is used
+// for OpenRouter's own free-model marker (:free), never for another relay's
+// zero price.
+func (p Provider) IsOpenRouter() bool {
+	if p.Preset == "openrouter" {
+		return true
+	}
+	h := p.Host()
+	return h == "openrouter.ai" || strings.HasSuffix(h, ".openrouter.ai")
+}
+
+// isOpenRouterFree is OpenRouter's own free-model marker. A model priced at
+// zero without the suffix is not taken as free for routing.
+func isOpenRouterFree(model string) bool {
+	return strings.HasSuffix(strings.ToLower(model), ":free")
+}
+
 // openCodeAt is OpenCodeURL for a host as Host gives it, its port and
 // any user aside, read without parsing a URL: the providers' page asks
 // IsOpenCode for each model, and url.Parse there was 7 MB of what twenty

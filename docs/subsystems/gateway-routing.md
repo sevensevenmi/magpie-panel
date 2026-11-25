@@ -658,6 +658,20 @@ the key's leaves the call as asked, with a log line (`compactRefused`).
   `TestUnroutedMaskingNotCutOff`, `TestUnroutedSlotWaitNotCutOff`,
   `TestUnroutedMostLeavesOutMasking`, `TestMaskingModelWaitNotCutOffAtMost`.
 
+- A vendor's free-model marker scopes every path that holds its paid
+  allowance: Cline's `cline-free/` and feed-marked models, Kilo's `isFree`,
+  `:free` and `kilo-auto/free` ids, and OpenRouter's `:free` suffix. The
+  key and plugin-account windows are narrowed by `paidOnly`; a card told to
+  another magpie carries the same set as `freeModels`, and the receiver
+  applies it to whole-key/account windows only. An ordinary `$0` price and
+  the user's Count as free are not vendor markers.
+
+- OpenRouter's Gemini keeps a small client `max_tokens`: OpenRouter reserves
+  that whole amount against a key's balance, so raising it can refuse a
+  low-balance request. When no reasoning or user Max output is named,
+  magpie asks for `reasoning.effort: "low"` instead; the limit stays as the
+  client sent it. Google's own Gemini routes keep the thinking-room rule.
+
 ## A route group held to chosen accounts
 
 A routing group may be held to some accounts of a provider (`Group.Accounts`,
