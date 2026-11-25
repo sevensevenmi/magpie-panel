@@ -609,6 +609,10 @@ type ompModel struct {
 	// without it omp takes a bundled model's its fuzzy id match finds, and
 	// a group/* id matches none, so its calls cost 0 (taotao7 on Discord).
 	Cost *ompCost `yaml:"cost,omitempty"`
+	// AsksAdaptively is a routing group whose members all ask Messages
+	// adaptively, carried from catalog.Model for ompOn's provider-level
+	// protocol switch.
+	AsksAdaptively bool `yaml:"-"`
 }
 
 // ompCost is a model's cost in omp's models.yml (omp 18.9.1,
@@ -727,7 +731,7 @@ func ompProviderAt(gw, version string) ompProviderEntry {
 	takesMax := ompTakesMax(version)
 	ms := []ompModel{}
 	for _, m := range sharedModels("omp") {
-		e := ompModel{ID: m.ID, Name: m.Name, Context: m.Context, MaxTokens: maxTokens(m)}
+		e := ompModel{ID: m.ID, Name: m.Name, Context: m.Context, MaxTokens: maxTokens(m), AsksAdaptively: m.AsksAdaptively}
 		if p := m.Price; p != nil {
 			e.Cost = &ompCost{Input: p.Input, Output: p.Output, CacheRead: p.CacheRead, CacheWrite: p.CacheWrite}
 		}
@@ -754,7 +758,7 @@ func ompProviderAt(gw, version string) ompProviderEntry {
 			// effort, which a model that can stop thinking (a GLM)
 			// takes as thinking on (#6778)
 			mode = "budget"
-			if gateway.AdaptiveThinking(m.ID) {
+			if gateway.AdaptiveThinking(m.ID) || m.AsksAdaptively {
 				mode = "anthropic-adaptive"
 			}
 		}

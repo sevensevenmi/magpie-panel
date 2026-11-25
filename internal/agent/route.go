@@ -415,11 +415,13 @@ func buildModels(agent string) []catalog.Model {
 			m.APIs = modelAPIs(e.Provider, e.Model)
 		} else if api := provider.GroupAPI(members(e.ID)); api != "" {
 			m.APIs = []string{string(api)}
-		} else if agent == "dsh" || agent == dsbotID {
-			// dsh has a route per API, so a group every member of which
-			// is best on Messages or Gemini's goes on that route, as
-			// each member alone would (01huadalang on Discord)
-			m.APIs, m.AsksAdaptively = dshGroupAPIs(members(e.ID))
+		} else if groupRouteAgent(agent) {
+			// an agent with routes per API asks a group every member of
+			// which is best on Messages or Gemini's on that route, as each
+			// member alone would (01huadalang on Discord); an agent that
+			// can't speak Gemini's API keeps the common Messages route, or
+			// Chat when there is none
+			m.APIs, m.AsksAdaptively = groupAPIs(members(e.ID))
 		}
 		// the service tiers Codex is offered on it, as the gateway's own
 		// lists offer them: Fast in the Codex CLI magpie writes
@@ -484,6 +486,16 @@ func modelAPIs(p *provider.Provider, model string) []string {
 		}
 	}
 	return nil
+}
+
+// groupRouteAgent is an agent whose list has a route per API, so a routing
+// group can go on the API every member shares instead of Chat.
+func groupRouteAgent(agent string) bool {
+	switch agent {
+	case "pi", "omp", "droid", "hermes", "grok", "liveagent", "dsh", dsbotID:
+		return true
+	}
+	return false
 }
 
 // describedNow is provider.Described, asked once for every agent's list
