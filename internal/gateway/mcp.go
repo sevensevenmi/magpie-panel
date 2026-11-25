@@ -178,6 +178,12 @@ func (s *Server) mcpProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	flusher, _ := w.(http.Flusher)
+	// net/http holds headers until the body is written, and an event stream
+	// may sit silent before its first event while an agent waits on them.
+	contentType := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
+	if flusher != nil && strings.HasPrefix(contentType, "text/event-stream") {
+		flusher.Flush()
+	}
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := resp.Body.Read(buf)

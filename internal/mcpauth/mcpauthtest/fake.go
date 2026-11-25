@@ -43,6 +43,10 @@ type Fake struct {
 	// NoMetadata leaves out the resource metadata: the server of the 2025-03
 	// spec, whose authorization server is its own origin
 	NoMetadata bool
+	// SilentGET makes a GET's event stream send its headers and then wait
+	// with no event, as a server holding the stream open between the
+	// client's pings does (#7744)
+	SilentGET bool
 	// OpenID is an authorization server that is an OpenID provider, as
 	// Vercel's is: the server names only the scope "openid" and its 401 none,
 	// and a refresh token is given only to a sign-in that asked for
@@ -276,6 +280,11 @@ func (f *Fake) mcp(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		w.Header().Set("Content-Type", "text/event-stream")
 		fl := w.(http.Flusher)
+		if f.silentGET() {
+			fl.Flush()
+			<-r.Context().Done()
+			return
+		}
 		for i := 1; i <= 2; i++ {
 			fmt.Fprintf(w, "id: %d\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/ping\",\"params\":{\"n\":%d}}\n\n", i, i)
 			fl.Flush()
@@ -379,4 +388,10 @@ func (f *Fake) ForgetRefresh() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.refresh = map[string]bool{}
+}
+
+func (f *Fake) silentGET() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.SilentGET
 }

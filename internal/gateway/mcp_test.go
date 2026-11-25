@@ -2,11 +2,13 @@ package gateway
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yetone/magpie/internal/access"
 	"github.com/yetone/magpie/internal/mcpauth"
@@ -280,5 +282,51 @@ func TestMCPProxyRefusedAfterRenewalRunsOut(t *testing.T) {
 	}
 	if st := mcpauth.StatusOf("neon", f.URL); !st.SignedIn || !st.Dead {
 		t.Fatalf("the sign-in after a renewed token was refused: %+v", st)
+	}
+}
+
+// A GET's stream may sit silent before its first event, and an agent's
+// handshake waits on its headers alone: net/http holds a response's
+// headers until its body is written, so the proxy has to flush them
+// itself (#7744).
+func TestMCPProxyFlushesSilentGETStreamHeaders(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		held bool
+	}{
+		{"direct", false},
+		{"restricted_key", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fresh(t)
+			f := mcpauthtest.New(t)
+			f.SilentGET = true
+			f.SignIn(t, "neon")
+			secret := ""
+			if c.held {
+				secret = keyHeldToMCP(t, "neon-holder", "neon")
+			}
+			gw := httptest.NewServer(New().Handler())
+			defer gw.Close()
+
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, gw.URL+"/mcp/neon", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Accept", "text/event-stream")
+			if c.held {
+				req.Header.Set("Authorization", "Bearer "+secret)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("GET /mcp/neon blocked waiting for headers: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+				t.Fatalf("GET: %d %v", resp.StatusCode, resp.Header)
+			}
+		})
 	}
 }
