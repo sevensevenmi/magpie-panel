@@ -5755,7 +5755,7 @@ const urlImagesKept = 32
 // alone, in place: from public addresses only (publicClient), and each
 // must be an image. One that can't be had fails the request, saying which
 // and why.
-func fetchURLImages(ctx context.Context, msgs []Message) error {
+func fetchURLImages(ctx context.Context, msgs []Message, forWhom string) error {
 	fill := func(p *Part) error {
 		if p.Data != "" || p.URL == "" {
 			return nil
@@ -5766,7 +5766,7 @@ func fetchURLImages(ctx context.Context, msgs []Message) error {
 		if !ok {
 			b, _, err := FetchImage(ctx, publicClient, p.URL)
 			if err != nil {
-				return fmt.Errorf("couldn't fetch the image at %s for the interactive mode: %v", p.URL, err)
+				return fmt.Errorf("couldn't fetch the image at %s for %s: %v", p.URL, forWhom, err)
 			}
 			mt := http.DetectContentType(b)
 			if !strings.HasPrefix(mt, "image/") {
@@ -7665,7 +7665,7 @@ func (s *Server) serveSubscriptionAs(w http.ResponseWriter, r *http.Request, fro
 	if name == "Claude Code" && wantTUI(req) && urlImages(req.Messages) > 0 {
 		// the interactive mode is pasted files: an image known by its URL
 		// is downloaded first, as -p's Claude Code had Anthropic fetch it
-		if err := fetchURLImages(r.Context(), req.Messages); err != nil {
+		if err := fetchURLImages(r.Context(), req.Messages, "the interactive mode"); err != nil {
 			return writeError(w, from, 400, "Claude Code: "+err.Error()), err.Error()
 		}
 	}

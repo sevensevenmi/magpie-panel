@@ -9112,6 +9112,17 @@ func (s *Server) forwardTranslated(ctx context.Context, p provider.Provider, to 
 			r := *req
 			r.System, sent = withoutBillingHeader(r.System), &r
 		}
+		if to == provider.Anthropic && p.IsPlugin() && p.ID == "agy-cli" {
+			// agy-cli accepts inline image data alone. Fetch URL images
+			// through the public-address guard before its Messages request
+			// is built, so OpenAI image_url, Anthropic URL sources and
+			// Gemini fileData.fileUri all arrive as base64.
+			inlined, err := inlinePluginURLImages(ctx, sent)
+			if err != nil {
+				return nil, to, err
+			}
+			sent = inlined
+		}
 		body, err := buildFor(p, to, sent, model)
 		if err != nil {
 			return nil, to, err
@@ -10566,6 +10577,24 @@ func buildFor(p provider.Provider, proto provider.Protocol, r *Request, model st
 		r = &c
 	}
 	return build(proto, r, model, buildHost(p), p.RejectsTemperature(model))
+}
+
+// inlinePluginURLImages copies r deeply enough for fetchURLImages to fill
+// URL-only images without changing the request another provider or retry
+// may use.
+func inlinePluginURLImages(ctx context.Context, r *Request) (*Request, error) {
+	c := *r
+	c.Messages = slices.Clone(r.Messages)
+	for i := range c.Messages {
+		c.Messages[i].Parts = slices.Clone(c.Messages[i].Parts)
+		for j := range c.Messages[i].Parts {
+			c.Messages[i].Parts[j].Images = slices.Clone(c.Messages[i].Parts[j].Images)
+		}
+	}
+	if err := fetchURLImages(ctx, c.Messages, "the agy-cli plugin"); err != nil {
+		return nil, err
+	}
+	return &c, nil
 }
 
 func build(proto provider.Protocol, r *Request, model, host string, rejectTemp bool) ([]byte, error) {
