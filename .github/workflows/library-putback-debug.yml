@@ -4,7 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [debug/linux-skill-putback]
-    paths: [.github/workflows/library-putback-debug.yml]
+    paths:
+      - .github/workflows/library-putback-debug.yml
+      - internal/library/**
 
 permissions:
   contents: read
