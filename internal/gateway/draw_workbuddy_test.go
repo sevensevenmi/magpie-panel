@@ -74,6 +74,19 @@ const wbGPTImageModels = `[{"id":"gpt-5.5","name":"GPT-5.5"},
 	{"id":"gpt-image-2.5-sunburst","name":"GPT-Image-2.5-Sunburst","tags":["text-to-image","image-to-image"]},
 	{"id":"seedance-2.5","name":"Seedance-2.5","tags":["text-to-video","image-to-video"]}]`
 
+func TestWorkBuddyPublicImageURL(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"http://bucket.cos-internal.ap-guangzhou.tencentcos.cn/a.png?sig=x", "http://bucket.cos.ap-guangzhou.myqcloud.com/a.png?sig=x"},
+		{"https://bucket.cos-internal.ap-beijing.tencentcos.cn:443/a.png?x=1", "https://bucket.cos.ap-beijing.myqcloud.com:443/a.png?x=1"},
+		{"https://bucket.cos.ap-beijing.myqcloud.com/a.png", "https://bucket.cos.ap-beijing.myqcloud.com/a.png"},
+		{"https://bucket.cos-internal.example.com/a.png", "https://bucket.cos-internal.example.com/a.png"},
+	} {
+		if got := wbPublicImageURL(c.in); got != c.want {
+			t.Errorf("wbPublicImageURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // wbSignedIn installs the fake plugin as WorkBuddy's (id), signed in, its
 // API at the studio, and gives magpie's provider for it: the retired
 // built-in's id is the plugin's.
@@ -98,7 +111,8 @@ func wbSignedIn(t *testing.T, id string, st http.Handler) provider.Provider {
 // named; the image comes back as WorkBuddy gave it (a URL) out of its
 // envelope; AutoDrawer never picks one, as each image costs credits.
 func TestWorkBuddyDrawsWithItsConfigsModels(t *testing.T) {
-	const kept = "https://cos.example/img-1.png?sign=x"
+	const kept = "http://hunyuan-image-result-xxx.cos-internal.ap-guangzhou.tencentcos.cn/text2image2/result.png?sign=x"
+	const public = "http://hunyuan-image-result-xxx.cos.ap-guangzhou.myqcloud.com/text2image2/result.png?sign=x"
 	st := &wbStudio{models: wbHunyuanModels, answer: func(path string, body map[string]any) string {
 		if path == "/v1/images/edits" {
 			return `{"code":0,"msg":"OK","data":{"created":1,"data":[{"b64_json":"` + base64.StdEncoding.EncodeToString(pngBytes) + `"}],"usage":{"input_tokens":3,"output_tokens":7}}}`
@@ -139,7 +153,7 @@ func TestWorkBuddyDrawsWithItsConfigsModels(t *testing.T) {
 
 	s := New()
 	code, _, raw := postImages(t, s, "/v1/images/generations", "application/json", `{"model":"workbuddy/hunyuan-image-v3.0-art","prompt":"a magpie","size":"1024x1024","n":1,"quality":"high"}`)
-	if code != 200 || !strings.Contains(raw, `"url":"`+kept+`"`) {
+	if code != 200 || !strings.Contains(raw, `"url":"`+public+`"`) || strings.Contains(raw, "cos-internal") {
 		t.Fatalf("%d %s", code, raw)
 	}
 	body, _ := st.got("/v1/images/generations")

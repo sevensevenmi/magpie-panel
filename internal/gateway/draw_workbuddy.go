@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -137,6 +139,30 @@ func wbImageModelsOf(ctx context.Context, client *http.Client, p provider.Provid
 	}
 	wbImages.Unlock()
 	return wbAskImages(ctx, client, p, key)
+}
+
+// wbPublicImageURL maps WorkBuddy's VPC-only COS host to the public COS
+// host that serves the same object with the same path and signature.
+func wbPublicImageURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	labels := strings.Split(strings.ToLower(u.Hostname()), ".")
+	for i := range labels {
+		if labels[i] != "cos-internal" || i+3 >= len(labels) ||
+			labels[len(labels)-2] != "tencentcos" || labels[len(labels)-1] != "cn" {
+			continue
+		}
+		labels[i], labels[len(labels)-2], labels[len(labels)-1] = "cos", "myqcloud", "com"
+		host := strings.Join(labels, ".")
+		if port := u.Port(); port != "" {
+			host = net.JoinHostPort(host, port)
+		}
+		u.Host = host
+		return u.String()
+	}
+	return raw
 }
 
 // wbAskImages asks p's config for its image models and keeps the answer:

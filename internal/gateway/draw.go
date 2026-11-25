@@ -2029,6 +2029,9 @@ func readImagesAnswer(p provider.Provider, url string, b []byte, code int) (draw
 			}
 			out.Images = append(out.Images, picture{Mime: mime, Data: data})
 		} else if e.URL != "" {
+			if isWorkBuddy(p) {
+				e.URL = wbPublicImageURL(e.URL)
+			}
 			out.Images = append(out.Images, picture{URL: e.URL})
 		}
 	}
