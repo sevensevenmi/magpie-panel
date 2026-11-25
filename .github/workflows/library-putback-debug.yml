@@ -2,6 +2,9 @@ name: Library putback debug
 
 on:
   workflow_dispatch:
+  push:
+    branches: [debug/linux-skill-putback]
+    paths: [.github/workflows/library-putback-debug.yml]
 
 permissions:
   contents: read
