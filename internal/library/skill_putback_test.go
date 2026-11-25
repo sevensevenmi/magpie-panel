@@ -34,7 +34,11 @@ func TestRemovedImportGoesBackToTheAgents(t *testing.T) {
 
 	ok(t)(ImportSkill("notes"))
 	v, _ := Read(nil)
-	t.Logf("notes home after import: %+v", v.Skills[0].Home)
+	l, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("notes home after import: %+v", l.Skills[0].Home)
 	if len(v.Skills) != 1 || !slices.Equal(v.Skills[0].Back, []string{"claude", "codex", "gemini"}) {
 		t.Fatalf("skills: %+v", v.Skills)
 	}
@@ -91,7 +95,11 @@ func TestRemovedLinkedImportGoesBack(t *testing.T) {
 	}
 	ok(t)(ImportSkill("dev"))
 	v, _ := Read(nil)
-	t.Logf("dev home after import: %+v", v.Skills[0].Home)
+	l, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("dev home after import: %+v", l.Skills[0].Home)
 	if !ours(entry, "dev") {
 		t.Fatal("claude wasn't given the library's")
 	}
