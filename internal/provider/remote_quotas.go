@@ -186,7 +186,20 @@ func cardsOf(data []SubscriptionQuota, now time.Time) []SubscriptionQuota {
 			}
 		}
 	}
-	return oneCardPerAccount(append(out, passedOnCards()...))
+	out = oneCardPerAccount(append(out, passedOnCards()...))
+	for i := range out {
+		q := &out[i]
+		if q.From != "" || len(q.Windows) == 0 || len(q.FreeModels) > 0 {
+			continue
+		}
+		if p, err := Find(q.Provider); err == nil {
+			// A card's whole windows need the same vendor marker the
+			// local routing path uses. Remote cards already carry this
+			// set from the magpie that read them.
+			q.FreeModels = p.freeModelIDs()
+		}
+	}
+	return out
 }
 
 // passedOnCards are the cards of each Remote magpie this one uses, as

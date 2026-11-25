@@ -49,6 +49,13 @@ func (p Provider) IsCline() bool {
 	return h == "cline.bot" || strings.HasSuffix(h, ".cline.bot")
 }
 
+// clineWindowed reports whether p's usage windows should leave Cline's free
+// models out: its built-in ClinePass provider and the Cline plugin account
+// both do.
+func (p Provider) clineWindowed() bool {
+	return p.IsCline() || p.PluginProvider() == "cline"
+}
+
 // clineFreePrefix is what the ids of Cline's free models start with; one
 // the feed's free list names may not (stealth/space-bunny-alpha).
 const clineFreePrefix = "cline-free/"

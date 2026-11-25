@@ -4444,6 +4444,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		roomless := !namesOutput(from, attemptBody)
 		attemptBody, voidRoomed := s.withVoidRoom(c.p, c.model, from, attemptBody)
 		attemptBody = withThinkingRoom(c.p, c.model, from, attemptBody)
+		attemptBody = withOpenRouterReasoningCap(c.p, c.model, from, attemptBody)
 		if roomFor == c.who()+"|"+c.model {
 			if b, ok := withReplyCap(from, attemptBody, roomCap); ok {
 				attemptBody = b

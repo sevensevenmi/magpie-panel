@@ -18,12 +18,14 @@ import (
 //
 // A window's json leaves out what routing reads (Span, Model, Aside), so
 // a magpie tells another its cards with Routing beside the windows
-// (ToldRouting), and the cards read are given them back (withRouting). A
-// card from a magpie too old to tell them isn't weighed: a "7 days ·
-// Opus" window would count against Sonnet, a five hours as a week.
+// (ToldRouting), and the cards read are given them back (withRouting). The
+// same cards carry FreeModels, the vendor-marked free set a receiver needs
+// to scope a whole-key/account window. A card from a magpie too old to tell
+// Routing isn't weighed: a "7 days · Opus" window would count against
+// Sonnet, a five hours as a week.
 
-// ToldRouting is cs, each card with its windows' Routing, for another
-// magpie: the gateway's answer of RemoteCardsPath.
+// ToldRouting is cs, each card with its windows' Routing and vendor-marked
+// FreeModels, for another magpie: the gateway's answer of RemoteCardsPath.
 func ToldRouting(cs []SubscriptionQuota) []SubscriptionQuota {
 	out := make([]SubscriptionQuota, len(cs))
 	for i, q := range cs {
@@ -39,8 +41,9 @@ func ToldRouting(cs []SubscriptionQuota) []SubscriptionQuota {
 }
 
 // withRouting lays each card's Routing back on its windows, as a remote
-// magpie told them, and marks the card one routing may go by. A window
-// whose span wasn't known there is named for it here ("7 days").
+// magpie told them, applies its FreeModels to whole-key/account windows, and
+// marks the card one routing may go by. A window whose span wasn't known
+// there is named for it here ("7 days").
 func withRouting(cs []SubscriptionQuota) []SubscriptionQuota {
 	out := make([]SubscriptionQuota, len(cs))
 	for i, q := range cs {
@@ -54,6 +57,7 @@ func withRouting(cs []SubscriptionQuota) []SubscriptionQuota {
 				}
 				ws[j] = w
 			}
+			ws = windowPaidOnly(ws, q.FreeModels)
 			q.Windows, q.routable = ws, true
 		}
 		q.Routing = nil

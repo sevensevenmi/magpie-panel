@@ -336,25 +336,32 @@ func keyAllowanceOf(p Provider, ws []QuotaWindow, now time.Time) Allowance {
 // OpenCode Go's 5 hours, week and month count none of its free models
 // (its list's "monthly_usage": null; beam-free, hy4-flash-free), which it
 // serves with every window used up ("If you reach the usage limit, you
-// can continue using the free models"). Read as the whole key's, a full
-// window held them too: ordered last, held at the key's cap, shown used
-// up on the Routing page (Winnie7572 on X, #7496). The free models are
-// p's list's as it is now (costsNothing); ws as it is at any other
-// vendor, or with none free. A window still counts model "", the key.
+// can continue using the free models"). Cline, Kilo and OpenRouter have
+// the same shape: their account/key windows count paid models, while their
+// vendor-marked free models are served apart. Read as the whole key's, a
+// full window held the free ones too: ordered last, held at the key's cap,
+// shown used up on the Routing page (Winnie7572 on X, #7496). The free
+// models are p's list's as it is now (costsNothing); ws as it is at any
+// other vendor, or with none free. A window still counts model "", the key.
 func (p Provider) paidOnly(ws []QuotaWindow) []QuotaWindow {
-	if len(ws) == 0 || !p.atOpenCodeGo() {
+	if len(ws) == 0 || !(p.atOpenCodeGo() || p.clineWindowed() || p.kiloWindowed() || p.IsOpenRouter()) {
 		return ws
 	}
-	free := map[string]bool{}
-	for _, m := range p.Available() {
-		if p.costsNothing(m) {
-			free[strings.ToLower(m.ID)] = true
-		}
-	}
-	if len(free) == 0 {
+	return windowPaidOnly(ws, p.freeModelIDs())
+}
+
+// windowPaidOnly scopes the windows that count a whole key or account to
+// models that are not in free. A per-model, family, pool or already-scoped
+// window is left as it was.
+func windowPaidOnly(ws []QuotaWindow, free []string) []QuotaWindow {
+	if len(ws) == 0 || len(free) == 0 {
 		return ws
 	}
-	paid := func(model string) bool { return !free[model] }
+	set := make(map[string]bool, len(free))
+	for _, id := range free {
+		set[strings.ToLower(id)] = true
+	}
+	paid := func(model string) bool { return !set[strings.ToLower(model)] }
 	out := slices.Clone(ws)
 	for i, w := range out {
 		if w.Model == "" && w.Family == "" && w.matches == nil {

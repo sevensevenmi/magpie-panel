@@ -295,8 +295,12 @@ type SubscriptionQuota struct {
 	// Routing is, on a card told another magpie (RemoteCardsPath), what
 	// each window's json leaves out for routing (Span, Model, Aside), in
 	// the windows' order: that magpie weighs its Remote magpie by the card
-	// (RemoteAllowance, #6708). Set only as cards are told; nil elsewhere.
-	Routing []lastWindow `json:"routing,omitempty"`
+	// (RemoteAllowance, #6708). FreeModels is the vendor-marked free set
+	// for the card's whole-key/account windows, so the receiver can keep
+	// those windows from holding back a free model (#7765). Both are set
+	// only as cards are told; nil elsewhere.
+	Routing    []lastWindow `json:"routing,omitempty"`
+	FreeModels []string     `json:"freeModels,omitempty"`
 	// routable: a remote magpie's card whose windows have Routing laid
 	// back on them (keepRemoteCards), so routing may go by them
 	routable bool

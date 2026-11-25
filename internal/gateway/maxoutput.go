@@ -448,6 +448,38 @@ func withThinkingRoom(p provider.Provider, model string, proto provider.Protocol
 	return withFields(body, map[string]any{field: n})
 }
 
+// withOpenRouterReasoningCap is the OpenRouter sibling of thinking room.
+// OpenRouter reserves the whole max_tokens against a key's balance, so a
+// small cap must not be raised. A Gemini that thinks by default gets a
+// conservative low effort instead, leaving the client's limit unchanged.
+func withOpenRouterReasoningCap(p provider.Provider, model string, proto provider.Protocol, body []byte) []byte {
+	if !p.IsOpenRouter() || !geminiThinksByDefault(model) ||
+		namesReasoning(proto, body) || userOutput(p, model) > 0 {
+		return body
+	}
+	var field string
+	switch proto {
+	case provider.Chat:
+		field = "max_tokens"
+		if !gjson.GetBytes(body, field).Exists() {
+			field = "max_completion_tokens"
+		}
+	case provider.Responses:
+		field = "max_output_tokens"
+	default:
+		return body
+	}
+	n := int(gjson.GetBytes(body, field).Int())
+	if n <= 0 || n > thinkingRoomBelow {
+		return body
+	}
+	// OpenRouter's unified reasoning object is used rather than its
+	// compatibility reasoning_effort spelling. low is supported by the
+	// Gemini family and is safer than none for models with mandatory
+	// reasoning.
+	return withFields(body, map[string]any{"reasoning": map[string]any{"effort": "low"}})
+}
+
 // thinkingRoomBelow is the largest reply limit a request names that is
 // raised for thinking: a client that asked for more has made room.
 const thinkingRoomBelow = 16384

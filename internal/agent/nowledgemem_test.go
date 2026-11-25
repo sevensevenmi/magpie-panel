@@ -258,6 +258,9 @@ func TestNowledgeMemKeepsTheUsersMagpie(t *testing.T) {
 	home, dir := memTestHome(t)
 	f := serveFakeMem(t, dir)
 	f.add("magpie", "magpie", "theirs", "http://192.168.1.9:3425/v1", 0.3)
+	d := f.read()
+	d.Providers["magpie"].Timeout = 60
+	f.write(d)
 	f.add("openai", "openai", "gpt-5", "", 0.5)
 	a := nowledgeMem(home)
 	if err := a.Field("model").Set("magpie/deepseek/pro"); err != nil {
@@ -266,15 +269,15 @@ func TestNowledgeMemKeepsTheUsersMagpie(t *testing.T) {
 	if _, sent := f.keys["magpie"]; sent {
 		t.Error("the user's own magpie provider was given magpie's key")
 	}
-	if p := f.read().Providers["magpie"]; p.APIBase != gatewayV1() || p.Temperature != 0.3 {
+	if p := f.read().Providers["magpie"]; p.APIBase != gatewayV1() || p.Temperature != 0.3 || p.Timeout != 60 {
 		t.Errorf("connected: %+v", p)
 	}
 	if err := a.Disconnect(); err != nil {
 		t.Fatal(err)
 	}
-	d := f.read()
+	d = f.read()
 	p := d.Providers["magpie"]
-	if p == nil || p.Model != "theirs" || p.APIBase != "http://192.168.1.9:3425/v1" || p.Temperature != 0.3 || p.MaxTokens != 4096 || d.Active != "openai" {
+	if p == nil || p.Model != "theirs" || p.APIBase != "http://192.168.1.9:3425/v1" || p.Temperature != 0.3 || p.MaxTokens != 4096 || p.Timeout != 60 || d.Active != "openai" {
 		t.Errorf("after disconnect: %+v %+v", d, p)
 	}
 }
@@ -520,5 +523,28 @@ func TestNowledgeMemOnlyOnThisComputer(t *testing.T) {
 		if memConnect(dir) != nil {
 			t.Errorf("%s reached", u)
 		}
+	}
+}
+
+// Magpie raises only the timeout of the provider it manages. A user's own
+// magpie provider keeps its 60 seconds, and an unmanaged provider with no
+// timeout keeps Mem's default.
+func TestMemBodyManagedTimeout(t *testing.T) {
+	sixty := 60.0
+	managed := memBody(memProvider{Timeout: &sixty}, magpieID, "deepseek/pro", true)
+	if got, _ := managed["timeout"].(float64); got != memMagpieTimeout {
+		t.Fatalf("managed timeout %v, want %v", managed["timeout"], memMagpieTimeout)
+	}
+	owned := memBody(memProvider{Timeout: &sixty}, magpieID, "deepseek/pro", false)
+	if got, _ := owned["timeout"].(float64); got != sixty {
+		t.Fatalf("user's timeout %v, want 60", owned["timeout"])
+	}
+	none := memBody(memProvider{}, magpieID, "deepseek/pro", false)
+	if _, ok := none["timeout"]; ok {
+		t.Fatalf("unmanaged provider got a timeout: %v", none["timeout"])
+	}
+	managedNone := memBody(memProvider{}, magpieID, "deepseek/pro", true)
+	if got, _ := managedNone["timeout"].(float64); got != memMagpieTimeout {
+		t.Fatalf("managed default timeout %v, want %v", managedNone["timeout"], memMagpieTimeout)
 	}
 }
