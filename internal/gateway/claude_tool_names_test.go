@@ -142,8 +142,11 @@ done
 	// under the names it was offered them by
 	req := &Request{Tools: []Tool{{Name: "a.b"}, {Name: "a_b"}, {Name: long}}, ToolChoice: "name:a.b"}
 	offer := bridgeTools(req)
-	if len(offer) != 1 || !validRe.MatchString(offer[0].Name) || offer[0].Name == "a_b" {
-		t.Fatalf("tool_choice a.b offers %+v", offer)
+	if len(offer) != 3 || !validRe.MatchString(offer[0].Name) || offer[0].Name == "a_b" {
+		t.Fatalf("tool_choice a.b offers %+v, want all three, a.b under a valid name", offer)
+	}
+	if got := allowedTools(req); len(got) != 1 || !got["a.b"] {
+		t.Errorf("tool_choice a.b allows %v, want only a.b", got)
 	}
 	if got, want := toolChoiceAsk(req), "You must call the mcp__magpie__"+offer[0].Name+" tool."; !strings.Contains(got, want) {
 		t.Errorf("tool choice %q, want %q", got, want)
@@ -155,6 +158,19 @@ done
 	}
 	if !strings.Contains(text.String(), "[tool call mcp__magpie__"+bridgeToolName(long)+" id=c2 ") || len("mcp__magpie__"+bridgeToolName(long)) > 64 {
 		t.Errorf("history tells the long name as %q", text.String())
+	}
+}
+
+func TestClaudeNamedToolChoiceKeepsEveryToolForTheRun(t *testing.T) {
+	req := &Request{
+		Tools:      []Tool{{Name: "todo"}, {Name: "bash"}},
+		ToolChoice: "name:todo",
+	}
+	if offer := bridgeTools(req); len(offer) != 2 {
+		t.Fatalf("tool_choice todo offers %d tools, want both the run needs: %+v", len(offer), offer)
+	}
+	if got := allowedTools(req); len(got) != 1 || !got["todo"] {
+		t.Fatalf("tool_choice todo allows %v, want only todo for this turn", got)
 	}
 }
 

@@ -8421,13 +8421,19 @@ func relayFailing(w http.ResponseWriter, r *http.Request, from provider.Protocol
 	return 200, col.err
 }
 
-// bridgeTools are the caller's tools as the MCP helper offers them, less
-// those a named tool_choice rules out. A choice of none keeps them all:
+// bridgeTools are the caller's tools as the MCP helper offers them. A named
+// tool_choice keeps them all, as a choice of none does: the run's agent is
+// offered its tools once, as it starts, and a tool left out for the turn a
+// choice forces never reaches it in the turns after, when the client's tool
+// results come back to the same run and it must call them (the todo a client
+// forces first, then its other tools in the same turn).
+//
 // Anthropic caches a prompt as its tools, then its system prompt, then
 // its messages, so a turn told none of them is a prefix the cache has
 // never seen, and was written to it whole, its tools and system prompt
 // too (bbfatx on X: a title or a summary asked with tool_choice none, of
-// a long conversation). The turn may call none of them (allowedTools).
+// a long conversation). The turn may call none of them, or only the one it
+// chose (allowedTools).
 // Each schema is folded to an object root (objectSchema), as a Messages
 // request magpie builds is: Claude Code leaves out an MCP tool whose
 // inputSchema has a oneOf, anyOf or allOf at its root, which Anthropic's
@@ -8436,9 +8442,6 @@ func relayFailing(w http.ResponseWriter, r *http.Request, from provider.Protocol
 func bridgeTools(req *Request) []bridgeTool {
 	tools := make([]bridgeTool, 0, len(req.Tools))
 	for _, t := range req.Tools {
-		if strings.HasPrefix(req.ToolChoice, "name:") && t.Name != strings.TrimPrefix(req.ToolChoice, "name:") {
-			continue
-		}
 		schema := t.Schema
 		if len(schema) == 0 {
 			schema = json.RawMessage(`{"type":"object","properties":{}}`)
@@ -8450,10 +8453,14 @@ func bridgeTools(req *Request) []bridgeTool {
 }
 
 // allowedTools is the client's tools a turn of req may call, nil for all
-// it offers (subscriptionRun.allowed): none when it chose none.
+// it offers (subscriptionRun.allowed): none when it chose none, the one
+// it named when it chose one.
 func allowedTools(req *Request) map[string]bool {
 	if req.ToolChoice == "none" {
 		return map[string]bool{}
+	}
+	if name, ok := strings.CutPrefix(req.ToolChoice, "name:"); ok {
+		return map[string]bool{name: true}
 	}
 	return nil
 }
