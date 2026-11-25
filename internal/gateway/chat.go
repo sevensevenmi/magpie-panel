@@ -390,7 +390,7 @@ func dataURL(p Part) string {
 func buildHost(p provider.Provider) string {
 	if p.IsPlugin() {
 		switch id := p.PluginProvider(); id {
-		case "cursor", provider.CommandCodePlanID, "devin", "qoder", "qoder-cn":
+		case "cursor", "workbuddy", "workbuddy-ai", provider.CommandCodePlanID, "devin", "qoder", "qoder-cn":
 			// the plugin's own id, never the built-in's API host a moved
 			// account shows (api.commandcode.ai), which lost a moved Command
 			// Code Go conversation its reasoning
@@ -422,9 +422,11 @@ var failedAsText = map[string]bool{"devin": true, "qoder": true, "qoder-cn": tru
 // thought 5 of 5, the same without it 0 of 5, and a Codex Responses body
 // with each step's reasoning item, built here without it, 0 of 5
 // (@Anotiaww on X). Devin is sent no noReasoning: the plugin would give
-// swe-2 a thought it never had.
+// swe-2 a thought it never had. Cursor's and WorkBuddy's plugins also
+// read reasoning_content and replay it as their own reasoning, but do
+// not want a placeholder on a turn that had none.
 func chatReplaysReasoning(host, model string) bool {
-	return chatWantsReasoning(host, model) || host == "devin"
+	return chatWantsReasoning(host, model) || host == "devin" || host == "cursor" || host == "workbuddy" || host == "workbuddy-ai"
 }
 
 // chatWantsReasoning is whether a Chat upstream that has a turn's

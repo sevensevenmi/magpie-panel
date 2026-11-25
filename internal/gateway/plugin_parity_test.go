@@ -123,14 +123,31 @@ func TestCommandCodePluginReasoning(t *testing.T) {
 	reasoning := func(host string) any {
 		return chatBody(t, host)["messages"].([]any)[1].(map[string]any)["reasoning_content"]
 	}
-	for _, host := range []string{provider.CommandCodePlanID, "api.deepseek.com", "qoder", "qoder-cn", "devin"} {
+	for _, host := range []string{provider.CommandCodePlanID, "api.deepseek.com", "qoder", "qoder-cn", "devin", "cursor", "workbuddy", "workbuddy-ai"} {
 		if got := reasoning(host); got != "pondered" {
 			t.Errorf("%s got reasoning %v", host, got)
 		}
 	}
-	for _, host := range []string{"api.openai.com", "cursor", "zed", "copilot.tencent.com", "api.moonshot.cn"} {
+	for _, host := range []string{"api.openai.com", "zed", "copilot.tencent.com", "api.moonshot.cn"} {
 		if got := reasoning(host); got != nil {
 			t.Errorf("%s got reasoning_content %v", host, got)
+		}
+	}
+}
+
+// A moved plugin's chat is built for its plugin id, and Cursor/WorkBuddy
+// replay reasoning without asking for a noReasoning placeholder.
+func TestMovedReasoningPluginsBuildTheirHost(t *testing.T) {
+	for _, id := range []string{"cursor", "workbuddy", "workbuddy-ai"} {
+		p := provider.PluginForTest(id, id)
+		if got := buildHost(p); got != id {
+			t.Errorf("%s buildHost = %q", id, got)
+		}
+		if !chatReplaysReasoning(id, "m") {
+			t.Errorf("%s doesn't replay reasoning", id)
+		}
+		if chatWantsReasoning(id, "m") {
+			t.Errorf("%s asked for a noReasoning placeholder", id)
 		}
 	}
 }
