@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/pii"
 	"github.com/yetone/magpie/internal/redact"
 	"github.com/yetone/magpie/internal/settings"
@@ -294,6 +295,20 @@ func TestPrivacyModelFolder(t *testing.T) {
 	srv.ServeHTTP(rec, httptest.NewRequest("POST", "/api/privacy-model", strings.NewReader(`{"do":"folder","dir":"relative/path"}`)))
 	if rec.Code == http.StatusOK {
 		t.Fatalf("a relative folder was accepted")
+	}
+}
+
+// A folder and whether the user picked it come from one settings snapshot:
+// a move finishing between the two reads used to say the picked folder was
+// not picked (#7767).
+func TestPrivacyModelFolderUsesOneSnapshot(t *testing.T) {
+	st := settings.Defaults()
+	if folder, set := privacyModelFolder(st); set || folder != tilde(appdir.Cache()) {
+		t.Fatalf("default: %q %v", folder, set)
+	}
+	st.RedactModelDir = filepath.Join(t.TempDir(), "models")
+	if folder, set := privacyModelFolder(st); !set || folder != tilde(st.RedactModelDir) {
+		t.Fatalf("picked: %q %v", folder, set)
 	}
 }
 

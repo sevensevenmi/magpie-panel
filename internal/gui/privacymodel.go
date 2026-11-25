@@ -1,11 +1,13 @@
 package gui
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
 
+	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/masking"
 	"github.com/yetone/magpie/internal/pii"
 	"github.com/yetone/magpie/internal/settings"
@@ -43,8 +45,20 @@ func privacyModelState() privacyModelJSON {
 	for _, m := range models() {
 		out.Models = append(out.Models, m.Now())
 	}
-	out.Folder, out.FolderSet, out.Moving = tilde(pii.Root()), pii.Custom(), pii.MoveState()
+	// Read the move first and the folder after it: a request that began
+	// during a move may see the move end while the models are checked, and
+	// the folder must then be the one the move saved (#7767).
+	out.Moving = pii.MoveState()
+	out.Folder, out.FolderSet = privacyModelFolder(settings.Load())
 	return out
+}
+
+// privacyModelFolder is the folder and whether the user picked it from one
+// settings snapshot: the move's save and a state read must not take Root
+// and Custom from different generations.
+func privacyModelFolder(st settings.Settings) (string, bool) {
+	dir := st.RedactModelDir
+	return tilde(cmp.Or(dir, appdir.Cache())), dir != ""
 }
 
 // privacyModelRoutes: GET /api/privacy-model is its state; POST with
