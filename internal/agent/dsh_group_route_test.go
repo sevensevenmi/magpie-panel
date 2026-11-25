@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -131,28 +132,37 @@ func TestDshGroupOnItsMembersRoute(t *testing.T) {
 	}
 }
 
-// Only dsh's lists change: Pi, omp and droid ask a group of Messages
-// members on Chat as before (provider.GroupAPI), and a member alone keeps
-// its own APIs.
-func TestDshGroupAPIsOnlyInDshsList(t *testing.T) {
+// A group every member of which is best on Messages or Gemini's now goes
+// on that route in every agent's list, not only dsh's. An agent that can't
+// speak Gemini's API keeps the common Messages route; one that can speak
+// neither stays on Chat. A member alone keeps its own APIs.
+func TestGroupAPIsReachEveryAgentsList(t *testing.T) {
 	dshGroupRouteHome(t, "0.2.2-rc.5")
-	for _, list := range []string{"pi", "omp", "droid"} {
-		for _, m := range magpieModels(list) {
-			if m.ID == "group/hydrogens" && (m.APIs != nil || m.AsksAdaptively) {
-				t.Errorf("%s: %s APIs %v adaptive %v", list, m.ID, m.APIs, m.AsksAdaptively)
-			}
-			if m.ID == "relay/gemini-4-hydrogen" && !slices.Equal(m.APIs, []string{"anthropic"}) {
-				t.Errorf("%s: %s APIs %v", list, m.ID, m.APIs)
-			}
+	for _, agent := range []string{"codex", "claude", "cursor"} {
+		if groupRouteAgent(agent) {
+			t.Errorf("%s took the per-API group route", agent)
 		}
 	}
-	for _, list := range []string{"dsh", dsbotID} {
+	for _, list := range []string{"pi", "omp", "droid", "hermes", "grok", "liveagent", "dsh", dsbotID} {
 		var found bool
 		for _, m := range magpieModels(list) {
-			if m.ID == "group/hydrogens" {
+			switch m.ID {
+			case "group/hydrogens":
 				found = true
 				if !slices.Equal(m.APIs, []string{"anthropic"}) || !m.AsksAdaptively {
 					t.Errorf("%s: %s APIs %v adaptive %v", list, m.ID, m.APIs, m.AsksAdaptively)
+				}
+			case "group/flashes":
+				if !slices.Equal(m.APIs, []string{"gemini"}) || m.AsksAdaptively {
+					t.Errorf("%s: %s APIs %v adaptive %v", list, m.ID, m.APIs, m.AsksAdaptively)
+				}
+			case "group/split", "group/mixed":
+				if m.APIs != nil || m.AsksAdaptively {
+					t.Errorf("%s: %s APIs %v adaptive %v", list, m.ID, m.APIs, m.AsksAdaptively)
+				}
+			case "relay/gemini-4-hydrogen":
+				if !slices.Equal(m.APIs, []string{"anthropic"}) {
+					t.Errorf("%s: %s APIs %v", list, m.ID, m.APIs)
 				}
 			}
 		}
@@ -160,4 +170,100 @@ func TestDshGroupAPIsOnlyInDshsList(t *testing.T) {
 			t.Errorf("%s: no group/hydrogens", list)
 		}
 	}
+
+	hydrogens := catalogModel(t, "group/hydrogens")
+	if e := piModelJSON(hydrogens, "http://127.0.0.1:3425", true); e["api"] != "anthropic-messages" || e["compat"] == nil {
+		t.Errorf("Pi group/hydrogens: %+v", e)
+	}
+	if e := piModelOn(hydrogens, "http://127.0.0.1:3425", true, "anthropic-messages"); e["compat"] == nil {
+		t.Errorf("Pi protocol row group/hydrogens: %+v", e)
+	}
+	if e := ompModelFor(t, "group/hydrogens"); e.API != "anthropic-messages" {
+		t.Errorf("omp group/hydrogens: %+v", e)
+	}
+	protocol := ompOn(ompProviderEntry{Models: []ompModel{{
+		ID: "group/hydrogens", AsksAdaptively: true, Thinking: &ompThinking{Mode: "budget", Efforts: []string{"low", "high"}},
+	}}}, "anthropic-messages")
+	if got := protocol.Models[0].Thinking; got == nil || got.Mode != "anthropic-adaptive" {
+		t.Errorf("omp protocol row group/hydrogens: %+v", got)
+	}
+	if e := droidEntryFor(t, "group/hydrogens"); e.Provider != "anthropic" {
+		t.Errorf("droid group/hydrogens provider %q", e.Provider)
+	}
+	if !hermesOnMessages(hydrogens) {
+		t.Error("Hermes group/hydrogens is not on Messages")
+	}
+	if got := grokBackend(hydrogens); got != "messages" {
+		t.Errorf("Grok group/hydrogens backend %q", got)
+	}
+	if got := liveAgentKindOf(hydrogens).key; got != "magpie-anthropic" {
+		t.Errorf("LiveAgent group/hydrogens key %q", got)
+	}
+
+	flashes := catalogModel(t, "group/flashes")
+	if e := piModelJSON(flashes, "http://127.0.0.1:3425", true); e["api"] != "google-generative-ai" {
+		t.Errorf("Pi group/flashes: %+v", e)
+	}
+	if e := ompModelFor(t, "group/flashes"); e.API != "google-generative-ai" {
+		t.Errorf("omp group/flashes: %+v", e)
+	}
+	if e := droidEntryFor(t, "group/flashes"); e.Provider != "generic-chat-completion-api" {
+		t.Errorf("droid group/flashes provider %q", e.Provider)
+	}
+	if hermesOnMessages(flashes) {
+		t.Error("Hermes group/flashes is on Messages")
+	}
+	if got := grokBackend(flashes); got != "chat_completions" {
+		t.Errorf("Grok group/flashes backend %q", got)
+	}
+	if got := liveAgentKindOf(flashes).key; got != "magpie" {
+		t.Errorf("LiveAgent group/flashes key %q", got)
+	}
+
+	pros := catalogModel(t, "group/pros")
+	if e := droidEntryFor(t, "group/pros"); e.Provider != "anthropic" {
+		t.Errorf("droid group/pros provider %q", e.Provider)
+	}
+	if !hermesOnMessages(pros) {
+		t.Error("Hermes group/pros is not on Messages")
+	}
+	if got := grokBackend(pros); got != "messages" {
+		t.Errorf("Grok group/pros backend %q", got)
+	}
+	if got := liveAgentKindOf(pros).key; got != "magpie-anthropic" {
+		t.Errorf("LiveAgent group/pros key %q", got)
+	}
+}
+
+func catalogModel(t *testing.T, id string) catalog.Model {
+	t.Helper()
+	for _, m := range magpieModels("pi") {
+		if m.ID == id {
+			return m
+		}
+	}
+	t.Fatalf("no catalog model %s", id)
+	return catalog.Model{}
+}
+
+func ompModelFor(t *testing.T, id string) ompModel {
+	t.Helper()
+	for _, m := range ompProviderAt("http://127.0.0.1:3425", "18.14.0").Models {
+		if m.ID == id {
+			return m
+		}
+	}
+	t.Fatalf("no omp model %s", id)
+	return ompModel{}
+}
+
+func droidEntryFor(t *testing.T, id string) droidEntry {
+	t.Helper()
+	for _, e := range droidEntriesAt("http://127.0.0.1:3425") {
+		if e.Model == id {
+			return e
+		}
+	}
+	t.Fatalf("no droid model %s", id)
+	return droidEntry{}
 }

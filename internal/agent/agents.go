@@ -979,7 +979,7 @@ func piModelOn(m catalog.Model, gw string, native bool, on string) map[string]an
 		e["compat"] = map[string]any{"supportsStrictMode": true}
 	case on == "anthropic-messages":
 		e["api"], e["baseUrl"] = on, gw
-		if gateway.AsksAdaptively(m.ID) {
+		if gateway.AsksAdaptively(m.ID) || m.AsksAdaptively {
 			e["compat"] = map[string]any{"forceAdaptiveThinking": true}
 		}
 	case !native:
@@ -997,7 +997,7 @@ func piModelOn(m catalog.Model, gw string, native bool, on string) map[string]an
 		e["compat"] = map[string]any{"supportsStrictMode": true}
 	case slices.Contains(m.APIs, string(provider.Anthropic)):
 		e["api"], e["baseUrl"] = "anthropic-messages", gw
-		if gateway.AsksAdaptively(m.ID) {
+		if gateway.AsksAdaptively(m.ID) || m.AsksAdaptively {
 			e["compat"] = map[string]any{"forceAdaptiveThinking": true}
 		}
 	}

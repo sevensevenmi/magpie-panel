@@ -2195,19 +2195,19 @@ func dshRouteFor(id string, models []catalog.Model) string {
 	return dshRoute
 }
 
-// dshGroupAPIs are the APIs a routing group not on Responses
-// (provider.GroupAPI) goes on in dsh, and whether it is asked adaptively
-// on Messages: the APIs every member's own list has (modelAPIs), so a
-// group of members each best on Messages, or on Gemini's, goes on that
-// route as each would alone, every member relaying it as it is (01huadalang
-// on Discord: a group of Gemini CLI models went on Chat). A member every
+// groupAPIs are the APIs a routing group not on Responses
+// (provider.GroupAPI) goes on, and whether it is asked adaptively on
+// Messages: the APIs every member's own list has (modelAPIs), so a group
+// of members each best on Messages, or on Gemini's, goes on that route as
+// each would alone, every member relaying it as it is (01huadalang on
+// Discord: a group of Gemini CLI models went on Chat). A member every
 // request to is translated anyway has no say. Messages is left out when
 // the members don't all ask adaptively, or all not (gateway.AsksAdaptively,
 // which the group's id doesn't answer): pi-ai asks the group one way for
 // every member. A group whose members share neither has none and stays on
-// Chat. Gemini's is the first where dsh speaks it, and the one after, if
-// any, where it doesn't (dshAskedOne), as for a lone Gemini model.
-func dshGroupAPIs(ms []provider.Member) (apis []string, adaptive bool) {
+// Chat. An agent that can't speak Gemini's API keeps the common Messages
+// route, or Chat when there is none.
+func groupAPIs(ms []provider.Member) (apis []string, adaptive bool) {
 	found, split := false, false
 	for _, m := range ms {
 		own := modelAPIs(&m.Provider, m.Model)

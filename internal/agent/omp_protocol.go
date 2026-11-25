@@ -57,7 +57,7 @@ func ompOn(e ompProviderEntry, on string) ompProviderEntry {
 		if on == "anthropic-messages" {
 			m.API, m.BaseURL = on, gw
 			mode = "budget"
-			if gateway.AdaptiveThinking(m.ID) {
+			if gateway.AdaptiveThinking(m.ID) || m.AsksAdaptively {
 				mode = "anthropic-adaptive"
 			}
 		}
