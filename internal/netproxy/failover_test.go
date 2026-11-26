@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"syscall"
@@ -152,6 +153,27 @@ func TestFailoverAsksTheNextAddress(t *testing.T) {
 	post(t, rt, ctx, "http://lan.test/v1/models", "")
 	if lan.n() != 2 || n.count("ts.test") != tsDials {
 		t.Errorf("LAN asked %d times, Tailscale dialled %d more; want the LAN address kept", lan.n(), n.count("ts.test")-tsDials)
+	}
+}
+
+// A Vouch guards a remote's only address too: nothing keyed reaches it
+// unless the Vouch passes it.
+func TestVouchGuardsTheOnlyAddress(t *testing.T) {
+	n := newFakeNet()
+	lan := &seen{}
+	n.serve(t, "lan.test", lan.handler(200))
+	called := false
+	ctx := WithVouch(WithFailover(context.Background(), "http://lan.test"), func(context.Context, *url.URL, func(*http.Request) (*http.Response, error)) (string, bool) {
+		called = true
+		return "", false
+	})
+	req, err := http.NewRequestWithContext(ctx, "GET", "http://lan.test/v1/models", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = n.dispatch().RoundTrip(req)
+	if !called || lan.n() != 0 || err == nil || !strings.Contains(err.Error(), "did not prove") {
+		t.Fatalf("vouch called %v, LAN asked %d, err %v", called, lan.n(), err)
 	}
 }
 

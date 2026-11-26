@@ -72,8 +72,8 @@ type failover struct {
 }
 
 // WithFailover is ctx for requests to roots, the addresses of one remote,
-// the first the one its URLs are made with. Fewer than two leaves ctx as
-// it is.
+// the first the one its URLs are made with. One root is enough when a
+// Vouch must guard its only address; none leaves ctx as it is.
 func WithFailover(ctx context.Context, roots ...string) context.Context {
 	f := failover{}
 	for _, r := range roots {
@@ -84,7 +84,7 @@ func WithFailover(ctx context.Context, roots ...string) context.Context {
 		u.RawQuery, u.Fragment, u.RawPath = "", "", ""
 		f.roots = append(f.roots, u)
 	}
-	if len(f.roots) < 2 {
+	if len(f.roots) == 0 {
 		return ctx
 	}
 	parts := make([]string, len(f.roots))

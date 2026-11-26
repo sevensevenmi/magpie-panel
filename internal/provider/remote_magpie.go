@@ -148,10 +148,11 @@ func (p Provider) checkAddresses() error {
 }
 
 // failoverRoots is the addresses requests on p's behalf may go to, its
-// own first, when it has others (netproxy.WithFailover); an unsaved
-// test's are taken as a save would write them.
+// own first (netproxy.WithFailover); an unsaved test's are taken as a
+// save would write them. One address stays one root so its Vouch can
+// guard it before the key is sent.
 func (p Provider) failoverRoots() []string {
-	if len(p.Addresses) == 0 || !p.IsRemoteMagpie() || p.Anthropic == "" {
+	if !p.IsRemoteMagpie() || p.Anthropic == "" {
 		return nil
 	}
 	out := []string{p.Anthropic}

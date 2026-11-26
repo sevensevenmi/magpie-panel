@@ -35,7 +35,7 @@ func (p Provider) Via(ctx context.Context) context.Context {
 	if len(p.Resolve) > 0 && p.TakesResolve() {
 		ctx = netproxy.WithResolve(ctx, p.Resolve)
 	}
-	if roots := p.failoverRoots(); len(roots) > 1 {
+	if roots := p.failoverRoots(); len(roots) > 0 {
 		ctx = netproxy.WithFailover(ctx, roots...)
 		ctx = netproxy.WithVouch(ctx, p.vouch())
 	}

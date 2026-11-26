@@ -16,12 +16,15 @@ import (
 )
 
 // TakesInsecureTLS is whether the provider may have its certificate left
-// unchecked (InsecureTLS, #2383): only one the user added with a base URL
-// of their own. A subscription's or a plugin's account, a preset's (whose
+// unchecked (InsecureTLS, #2383): one the user added with a base URL of
+// their own, or a Remote magpie whose own computer uses a self-signed
+// certificate. A Remote magpie proves it holds the gateway key before
+// its key is sent, so an unchecked certificate alone cannot impersonate
+// it. A subscription's or a plugin's account, another preset's (whose
 // vendor serves a certificate that checks) and a built-in's never do,
 // whatever providers.json says.
 func (p Provider) TakesInsecureTLS() bool {
-	return p.Account == nil && p.Preset == "" && !p.IsVertex() && hasEndpoint(p) && !subscriptionID(p.ID)
+	return p.Account == nil && (p.Preset == "" || p.IsRemoteMagpie()) && !p.IsVertex() && hasEndpoint(p) && !subscriptionID(p.ID)
 }
 
 // TakesClientCert is whether the provider may show a client certificate

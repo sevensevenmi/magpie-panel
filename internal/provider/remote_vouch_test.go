@@ -27,8 +27,16 @@ type keyedSeen struct {
 }
 
 func newKeyedSeen(t *testing.T, holds string) *keyedSeen {
+	return newKeyedSeenAt(t, holds, false)
+}
+
+func newKeyedSeenTLS(t *testing.T, holds string) *keyedSeen {
+	return newKeyedSeenAt(t, holds, true)
+}
+
+func newKeyedSeenAt(t *testing.T, holds string, secure bool) *keyedSeen {
 	k := &keyedSeen{}
-	k.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == RemoteProvePath {
 			var in struct {
 				Nonce string `json:"nonce"`
@@ -50,7 +58,12 @@ func newKeyedSeen(t *testing.T, holds string) *keyedSeen {
 		k.hosts = append(k.hosts, r.Host)
 		k.mu.Unlock()
 		w.Write([]byte(`{"data":[]}`))
-	}))
+	})
+	if secure {
+		k.srv = httptest.NewTLSServer(handler)
+	} else {
+		k.srv = httptest.NewServer(handler)
+	}
 	t.Cleanup(k.srv.Close)
 	return k
 }
@@ -100,6 +113,84 @@ func TestRemoteMagpieAddressProvesBeforeItsKey(t *testing.T) {
 	}
 	if keys, _ := real.seen(); len(keys) != 2 || !strings.Contains(keys[0], key) {
 		t.Fatalf("the remote was sent %q; want its key, twice", keys)
+	}
+}
+
+// The same guard applies when the remote has only one address: the old
+// behavior trusted a single private address, so moving to a café handed
+// its key to whatever took that address.
+func TestRemoteMagpieSingleAddressProvesBeforeItsKey(t *testing.T) {
+	azureHome(t)
+	dialsOut(t)
+	vouchOnLoopback(t)
+	const key = "sk-magpie-office"
+	real, impostor := newKeyedSeen(t, key), newKeyedSeen(t, "")
+	if err := Save(Provider{ID: "office", Name: "Office", Preset: RemoteMagpiePreset, Key: key, Chat: real.srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Find("office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := remoteBody(context.Background(), *p, "GET", "/v1/models", seekAnswer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if keys, _ := real.seen(); len(keys) != 2 || !strings.Contains(keys[0], key) {
+		t.Fatalf("the remote was sent %q; want its key, twice", keys)
+	}
+
+	if err := Save(Provider{ID: "office", Name: "Office", Preset: RemoteMagpiePreset, Key: key, Chat: impostor.srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	p, err = Find("office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = remoteBody(context.Background(), *p, "GET", "/v1/models", seekAnswer)
+	if keys, _ := impostor.seen(); len(keys) > 0 {
+		t.Fatalf("an address that didn't prove was sent %q", keys)
+	}
+	if err == nil || !strings.Contains(err.Error(), "did not prove") {
+		t.Fatalf("err %v; want it to say the address didn't prove", err)
+	}
+}
+
+// An unchecked TLS certificate gives no identity either. The remote
+// still proves its gateway key before the keyed request.
+func TestRemoteMagpieSingleInsecureTLSAddressProvesBeforeItsKey(t *testing.T) {
+	azureHome(t)
+	dialsOut(t)
+	const key = "sk-magpie-office"
+	real, impostor := newKeyedSeenTLS(t, key), newKeyedSeenTLS(t, "")
+	if err := Save(Provider{ID: "office", Name: "Office", Preset: RemoteMagpiePreset, Key: key, Chat: real.srv.URL, InsecureTLS: true}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Find("office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := remoteBody(context.Background(), *p, "GET", "/v1/models", seekAnswer); err != nil {
+		t.Fatal(err)
+	}
+	if keys, _ := real.seen(); len(keys) != 1 || !strings.Contains(keys[0], key) {
+		t.Fatalf("the remote was sent %q; want its key once", keys)
+	}
+
+	if err := Save(Provider{ID: "office", Name: "Office", Preset: RemoteMagpiePreset, Key: key, Chat: impostor.srv.URL, InsecureTLS: true}); err != nil {
+		t.Fatal(err)
+	}
+	p, err = Find("office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = remoteBody(context.Background(), *p, "GET", "/v1/models", seekAnswer)
+	if keys, _ := impostor.seen(); len(keys) > 0 {
+		t.Fatalf("an address that didn't prove was sent %q", keys)
+	}
+	if err == nil || !strings.Contains(err.Error(), "did not prove") {
+		t.Fatalf("err %v; want it to say the address didn't prove", err)
 	}
 }
 

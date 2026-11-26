@@ -1,22 +1,24 @@
 package provider
 
-// A Remote magpie with other addresses (Addresses, netproxy.WithFailover)
-// is one reached from more than one network: at home at its LAN address,
-// from outside through Tailscale or EasyTier (evjohnicu on X). Away from
-// home, its home network's address is a private one on whatever network
-// this computer is on now, a café's or a hotel's, where any host there,
-// one that took that address or answers ARP for it, would take the
-// connection and be handed the provider's key in clear, and, answering,
-// become the address asked first from then on (the one that last
-// answered), given the user's prompts and files. A look for a moved
-// remote (remote_moved.go) guards against just that, and so does this:
-// an address reached in plain http at a private or link-local IP, or a
-// .local name, is sent nothing keyed until it proves it holds the
-// provider's gateway key (proves), the proof asked the way the request
-// itself would go. A direct name is resolved here and connected to at
-// the IP that proved; through a provider proxy the name is left to the
-// proxy. A direct https address is the server its certificate says it
-// is, and a direct Tailscale address (100.64.0.0/10) is the peer
+// A Remote magpie may be reached from more than one network: at home at
+// its LAN address, from outside through Tailscale or EasyTier (evjohnicu
+// on X). Away from home, its home network's address is a private one on
+// whatever network this computer is on now, a café's or a hotel's, where
+// any host there, one that took that address or answers ARP for it,
+// would take the connection and be handed the provider's key in clear,
+// and, answering, become the address asked first from then on, given
+// the user's prompts and files. A look for a moved remote
+// (remote_moved.go) guards against just that, and so does this: an
+// address reached in plain http at a private or link-local IP, a .local
+// name, or any plain-http address that isn't Tailscale is sent nothing
+// keyed until it proves it holds the provider's gateway key (proves),
+// the proof asked the way the request itself would go. The same holds
+// for https when InsecureTLS leaves its certificate unchecked and no
+// ServerPin names it. This applies whether the remote has one address or
+// several. A direct name is resolved here and connected to at the IP that
+// proved; through a provider proxy the name is left to the proxy. A
+// direct certificate-checked https address is the server its certificate
+// says it is, and a direct Tailscale address (100.64.0.0/10) is the peer
 // WireGuard says it is: neither is asked to prove. A verdict is kept for
 // the networks this computer is on (vouchPrint) for a while. A provider
 // proxy or a Responses socket asks first even for an address it would
@@ -108,7 +110,11 @@ func (p Provider) vouch() netproxy.Vouch {
 		plainHTTP := strings.EqualFold(root.Scheme, "http")
 		secureHTTP := strings.EqualFold(root.Scheme, "https")
 		private := plainHTTP && vouchHost(root.Hostname())
-		if !private && !probeAll {
+		// Plain http carries no server identity, and InsecureTLS without a
+		// pin leaves https with none either. Both must prove, even when
+		// this is the remote's only address.
+		untrusted := plainHTTP && !tailscaleHost(root.Hostname()) && !loopbackHost(root.Hostname()) || secureHTTP && p.InsecureTLS && p.ServerPin == ""
+		if !private && !untrusted && !probeAll {
 			return "", true
 		}
 		seen := strings.Join([]string{root.String(), RemoteKeyID(key), vouchNets(), proxy, p.SocketMode(),
@@ -163,6 +169,17 @@ func (p Provider) vouch() netproxy.Vouch {
 func tailscaleHost(host string) bool {
 	ip := net.ParseIP(strings.TrimSuffix(host, ".")).To4()
 	return ip != nil && ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127
+}
+
+// loopbackHost is this computer itself, which no other host on a café's
+// network can take over.
+func loopbackHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // healthyVia asks root for an unkeyed HTTP answer. Through https, a
