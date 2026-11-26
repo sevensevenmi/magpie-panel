@@ -831,10 +831,13 @@ func (l *Library) syncSkills(t *Target, res *Result, all []*Target) {
 			// A junction to a missing target cannot be read back on
 			// Windows, so ours cannot identify it. Applied still records
 			// that magpie wrote this entry; when its skill is gone or
-			// dangling, take the broken link out rather than keep a
-			// dangling path in the agent's folder (#6697).
+			// dangling, a link with no readable target is magpie's broken
+			// entry (#6697). A healthy link is the user's now, even when
+			// the old Applied record still names this skill.
 			if fi, err := os.Lstat(p); err == nil && linkEntry(fi) {
-				owned = true
+				if _, err := os.Stat(p); absent(err) {
+					owned = true
+				}
 			}
 		}
 		if wanted(s) && !inShared(s) && !routed[name] || !owned {

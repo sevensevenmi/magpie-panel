@@ -109,3 +109,35 @@ func TestSyncReportsUnrestorableMissingSkillEntry(t *testing.T) {
 		t.Fatalf("sync kept a dangling agent link: %v", err)
 	}
 }
+
+// Applied records the skills magpie wrote. Once the library entry is gone,
+// a healthy link at that path can be the user's replacement; it isn't
+// magpie's dangling entry and must stay.
+func TestSyncKeepsAHealthyReplacementForAMissingSkill(t *testing.T) {
+	h := sandbox(t)
+	noGoose(t, h)
+	ok(t)(CreateSkill("notes", "Mine", []string{"claude"}))
+	user := filepath.Join(h, "user", "notes")
+	skill(t, user, "notes", "Mine")
+	at := filepath.Join(h, ".claude", "skills", "notes")
+	if err := unlink(at); err != nil {
+		t.Fatal(err)
+	}
+	if err := dirLink(user, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(skillDir("notes")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Sync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(res.Problems, func(p Problem) bool { return p.What == "skill:notes" }) {
+		t.Fatalf("sync hid the missing library entry: %+v", res.Problems)
+	}
+	if !linked(at) || realDir(at) != realDir(user) {
+		t.Fatalf("sync removed the user's healthy replacement: %s", at)
+	}
+}

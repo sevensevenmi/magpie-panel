@@ -46,7 +46,7 @@ func SetSkillsWhere(where string) (*Result, error) {
 // shared-folder link at the library, making every entry there the
 // library's own rather than one the user keeps elsewhere.
 func sharedIsLibrary() bool {
-	shared, lib := realDir(sharedSkillsDir()), realDir(skillsDir())
+	shared, lib := realBelow(sharedSkillsDir()), realBelow(skillsDir())
 	return within(shared, lib) || within(lib, shared)
 }
 
