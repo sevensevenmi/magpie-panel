@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -21,12 +22,16 @@ import (
 // scheme, the app's own) and its program is there: what a package puts
 // in /usr/share/applications, and what AppImageLauncher, Gear Lever or
 // the user writes in ~/.local/share/applications for an AppImage
-// anywhere.
+// anywhere. Apps with no scheme may name exact desktop ids and exact
+// release-artifact shapes; an AppImage still needs that entry and an
+// executable file.
 type linuxApp struct {
-	dirs   []string
-	exe    string
-	name   string
-	scheme string
+	dirs             []string
+	exe              string
+	name             string
+	scheme           string
+	desktopIDs       []string
+	appImagePatterns []string
 }
 
 // linuxAppOS is the system linuxApp looks on; tests stand in Linux.
@@ -44,7 +49,7 @@ func (l *linuxApp) installed() bool {
 			return true
 		}
 	}
-	return slices.ContainsFunc(appEntryPrograms(l.name, l.scheme), programThere)
+	return slices.ContainsFunc(appEntryPrograms(l), programThere)
 }
 
 // programThere reports whether a desktop entry's program is there: an
@@ -80,11 +85,11 @@ func appEntryDirs() []string {
 // counts, and one that is Hidden hides it. Each folder is read again
 // when its time changed (an entry added, removed or renamed over), else
 // once a minute: this runs whenever dsh's row is read.
-func appEntryPrograms(name, scheme string) []string {
+func appEntryPrograms(l *linuxApp) []string {
 	var progs []string
 	seen := map[string]bool{}
 	for _, dir := range appEntryDirs() {
-		for file, prog := range entriesIn(dir, name, scheme) {
+		for file, prog := range entriesIn(dir, l) {
 			if seen[file] {
 				continue
 			}
@@ -112,12 +117,12 @@ var entryScans = struct {
 
 // entriesIn is the desktop entries in dir (see entryScan); none when it
 // can't be read.
-func entriesIn(dir, name, scheme string) map[string]string {
+func entriesIn(dir string, l *linuxApp) map[string]string {
 	st, err := os.Stat(dir)
 	if err != nil || !st.IsDir() {
 		return nil
 	}
-	key := dir + "\x00" + name + "\x00" + scheme
+	key := dir + "\x00" + l.name + "\x00" + l.scheme + "\x00" + strings.Join(l.desktopIDs, "\x00") + "\x00" + strings.Join(l.appImagePatterns, "\x00")
 	entryScans.Lock()
 	scan, ok := entryScans.m[key]
 	entryScans.Unlock()
@@ -141,7 +146,7 @@ func entriesIn(dir, name, scheme string) map[string]string {
 		if err != nil {
 			continue
 		}
-		entries[f.Name()] = appEntryProgram(string(b), name, scheme)
+		entries[f.Name()] = appEntryProgram(string(b), f.Name(), l)
 	}
 	entryScans.Lock()
 	entryScans.m[key] = entryScan{at: st.ModTime(), read: time.Now(), entries: entries}
@@ -152,25 +157,22 @@ func entriesIn(dir, name, scheme string) map[string]string {
 // appEntryProgram is the program a desktop entry runs when it is the
 // app's: its Name is name, it handles scheme's links and isn't Hidden;
 // "" otherwise. A program run through env (Exec=env VAR=x prog) is prog.
-func appEntryProgram(entry, name, scheme string) string {
+func appEntryProgram(entry, file string, l *linuxApp) string {
 	keys := map[string]string{}
 	in := false
-	for _, l := range strings.Split(entry, "\n") {
-		l = strings.TrimSpace(l)
-		if strings.HasPrefix(l, "[") {
-			in = l == "[Desktop Entry]"
+	for _, line := range strings.Split(entry, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			in = line == "[Desktop Entry]"
 			continue
 		}
-		if k, v, ok := strings.Cut(l, "="); in && ok {
+		if k, v, ok := strings.Cut(line, "="); in && ok {
 			if k = strings.TrimSpace(k); keys[k] == "" {
 				keys[k] = strings.TrimSpace(v)
 			}
 		}
 	}
-	if keys["Name"] != name || keys["Hidden"] == "true" || keys["Type"] != "" && keys["Type"] != "Application" {
-		return ""
-	}
-	if !slices.Contains(strings.Split(keys["MimeType"], ";"), "x-scheme-handler/"+scheme) {
+	if keys["Hidden"] == "true" || keys["Type"] != "" && keys["Type"] != "Application" {
 		return ""
 	}
 	argv := desktopArgs(entry, "")
@@ -183,5 +185,43 @@ func appEntryProgram(entry, name, scheme string) string {
 	if len(argv) == 0 {
 		return ""
 	}
-	return argv[0]
+	prog := argv[0]
+	if l.appImage(file, keys, prog) {
+		return prog
+	}
+	if keys["Name"] != l.name || !slices.Contains(strings.Split(keys["MimeType"], ";"), "x-scheme-handler/"+l.scheme) {
+		return ""
+	}
+	return prog
+}
+
+// appImage reports whether file is an AppImage entry this linuxApp owns:
+// its Exec is an absolute executable whose exact artifact family matches,
+// and the entry is either the vendor's exact desktop id or carries
+// AppImage integration's identifier. A correct-looking artifact with no
+// desktop entry is never found: appEntryDirs only reads XDG applications.
+func (l *linuxApp) appImage(file string, keys map[string]string, prog string) bool {
+	if len(l.appImagePatterns) == 0 || !filepath.IsAbs(prog) || !strings.HasSuffix(strings.ToLower(prog), ".appimage") {
+		return false
+	}
+	if !l.appImageName(filepath.Base(prog)) || !appImageThere(prog) {
+		return false
+	}
+	return slices.Contains(l.desktopIDs, file) || keys["X-AppImage-Identifier"] != ""
+}
+
+// appImageName says name is one of this app's exact release artifact
+// shapes, not merely an AppImage with a similar product name.
+func (l *linuxApp) appImageName(name string) bool {
+	return slices.ContainsFunc(l.appImagePatterns, func(pattern string) bool {
+		ok, err := path.Match(pattern, name)
+		return err == nil && ok
+	})
+}
+
+// appImageThere is an AppImage at an absolute path: a regular executable
+// file. PATH is never consulted for one.
+func appImageThere(prog string) bool {
+	st, err := os.Stat(prog)
+	return err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0
 }

@@ -88,15 +88,21 @@ var desktopApps = map[string]desktopApp{
 	// folder changeable, registered under the UUID v5 of the appId; a deb
 	// into /opt/<productName> with executableName dsh-desktop-next and
 	// dsh-desktop, and no scheme of their own. DSH Desktop Beta
-	// (ai.deepseek.dsh.desktop.beta) is left out: it keeps ~/.dsh-beta.
+	// (ai.deepseek.dsh.desktop.beta) is a row of its own because it keeps
+	// ~/.dsh-beta and has its own desktop-next.json.
 	"dsh": {id: "com.deepseek.dsh", names: []string{"DeepSeek Harness.app"}, win: filepath.Join("DeepSeek Harness", "DeepSeek Harness.exe"), guid: "1bf39983-50d0-5fe0-9ef4-cece76f67c5e",
 		onLinux: &linuxApp{dirs: []string{"/usr/lib/deepseek-harness-desktop", "/opt/DeepSeek Harness"}, exe: "deepseek-harness", name: "DeepSeek Harness", scheme: "dsh"},
 		more: []desktopApp{
 			{id: "ai.deepseek.dsh.desktop.next", names: []string{"DSH NEXT.app"}, win: filepath.Join("DSH NEXT", "DSH NEXT.exe"), guid: "4a513c97-f710-5eb4-97f6-b8e556e2c341",
-				onLinux: &linuxApp{dirs: []string{"/opt/DSH NEXT"}, exe: "dsh-desktop-next", name: "DSH NEXT"}},
+				onLinux: &linuxApp{dirs: []string{"/opt/DSH NEXT"}, exe: "dsh-desktop-next", name: "DSH NEXT",
+					desktopIDs: []string{"dsh-desktop-next.desktop"}, appImagePatterns: []string{"DSH-NEXT-[0-9]*-x86_64.AppImage", "DSH-NEXT-[0-9]*-arm64.AppImage"}}},
 			{id: "ai.deepseek.dsh.desktop", names: []string{"DSH Desktop.app"}, win: filepath.Join("DSH Desktop", "DSH Desktop.exe"), guid: "85820364-4c28-594e-b046-8896b3669248",
-				onLinux: &linuxApp{dirs: []string{"/opt/DSH Desktop"}, exe: "dsh-desktop", name: "DSH Desktop"}},
+				onLinux: &linuxApp{dirs: []string{"/opt/DSH Desktop"}, exe: "dsh-desktop", name: "DSH Desktop",
+					desktopIDs: []string{"dsh-desktop.desktop"}, appImagePatterns: []string{"DSH-Desktop-[0-9]*-x86_64.AppImage", "DSH-Desktop-[0-9]*-arm64.AppImage"}}},
 		}},
+	"dsh-beta": {id: dshBetaAppID, names: []string{"DSH Desktop Beta.app"}, win: filepath.Join("DSH Desktop Beta", "DSH Desktop Beta.exe"), guid: "8374bcf8-6966-5e07-ad10-9a23d8f66087",
+		onLinux: &linuxApp{dirs: []string{"/opt/DSH Desktop Beta"}, exe: "dsh-desktop-beta", name: "DSH Desktop Beta",
+			desktopIDs: []string{"dsh-desktop-beta.desktop"}, appImagePatterns: []string{"DSH-Desktop-Beta-[0-9]*-x86_64.AppImage", "DSH-Desktop-Beta-[0-9]*-arm64.AppImage"}}},
 	// DS Bot's desktop app (app/electron-builder.yml, 0.3.0: appId
 	// io.github.fei2411.dsbot, productName DS Bot, DS Bot.app; DeepSeek
 	// Bot, its name before) runs a DSH of its own on its data folder

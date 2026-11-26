@@ -468,3 +468,32 @@ are added), its model list came from the gateway, and a chat went through
 it, counted as Cherry Studio's. A link that arrives while its first-run
 welcome page is up shows no dialog; after "set up later" it does.
 `magpie cherrystudio add` opens the link; the TUI leaves the row out.
+
+## DSH NEXT and DSH Desktop Beta homes
+
+This supersedes the "Not followed" sentence in the DeepSeekRuntime Desktop
+bullet above. DSH NEXT's selected data folder is
+`<appData>/DSH NEXT/home/desktop-next-location.json` first, then
+`$DSH_DESKTOP_NEXT_HOME`, then `~/.dsh`. `desktop-next.json` names its active
+profile, with `desktop` as the default. Path, Joined, Check, restore and the
+serving rounds use that profile. A locator, environment path or active
+profile that is malformed, relative or unreadable is unknown and fails closed;
+`desktop-next-last-home.json` is not a selection and is not read.
+
+DSH Desktop Beta (`ai.deepseek.dsh.desktop.beta`) is a separate `dsh-beta`
+row, not a `more` build of dsh. Its home is
+`<appData>/DSH Desktop Beta/home/desktop-next-location.json`, then
+`$DSH_DESKTOP_NEXT_HOME`, then `~/.dsh-beta`, with the same active-profile
+rule. Its Mac bundle is `DSH Desktop Beta.app`; its Windows install is
+`DSH Desktop Beta\DSH Desktop Beta.exe` or the folder registered under the
+UUID v5 of the app id; its Linux deb is `/opt/DSH Desktop Beta`
+(`dsh-desktop-beta`).
+
+DSH NEXT, DSH Desktop and Beta AppImages are found only through an XDG
+desktop entry in an applications directory. The entry must name the exact
+vendor desktop id or carry AppImage integration's identifier, name one of
+the exact release-artifact shapes (`DSH-NEXT-[0-9]*-{x86_64,arm64}.AppImage`,
+`DSH-Desktop-[0-9]*-{x86_64,arm64}.AppImage`,
+`DSH-Desktop-Beta-[0-9]*-{x86_64,arm64}.AppImage`), and point at an existing
+executable file. A correctly named AppImage with no desktop entry is not
+found by scanning the disk.

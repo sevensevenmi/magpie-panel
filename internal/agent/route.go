@@ -492,7 +492,7 @@ func modelAPIs(p *provider.Provider, model string) []string {
 // group can go on the API every member shares instead of Chat.
 func groupRouteAgent(agent string) bool {
 	switch agent {
-	case "pi", "omp", "droid", "hermes", "grok", "liveagent", "dsh", dsbotID:
+	case "pi", "omp", "droid", "hermes", "grok", "liveagent", "dsh", dshBetaID, dsbotID:
 		return true
 	}
 	return false

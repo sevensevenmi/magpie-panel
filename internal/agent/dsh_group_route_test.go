@@ -143,7 +143,7 @@ func TestGroupAPIsReachEveryAgentsList(t *testing.T) {
 			t.Errorf("%s took the per-API group route", agent)
 		}
 	}
-	for _, list := range []string{"pi", "omp", "droid", "hermes", "grok", "liveagent", "dsh", dsbotID} {
+	for _, list := range []string{"pi", "omp", "droid", "hermes", "grok", "liveagent", "dsh", dshBetaID, dsbotID} {
 		var found bool
 		for _, m := range magpieModels(list) {
 			switch m.ID {

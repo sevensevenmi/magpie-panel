@@ -836,7 +836,9 @@ func TestDshCheckSaysWhenNoCatalogAndAProfilesStartIsMagpies(t *testing.T) {
 func TestDshRoundWithoutDshBuildsNoCatalog(t *testing.T) {
 	_, dir, _ := dshRouteHome(t)
 	os.RemoveAll(dir)
-	if n := testing.AllocsPerRun(5, func() { dshWiredOnce() }); n > 50 {
+	// DSH NEXT's and Beta's fixed locators are checked here too; a catalog
+	// build is thousands of allocations, so keep this bound far below it.
+	if n := testing.AllocsPerRun(5, func() { dshWiredOnce() }); n > 100 {
 		t.Fatalf("a round without dsh made %.0f allocations", n)
 	}
 }

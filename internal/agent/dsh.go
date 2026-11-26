@@ -103,7 +103,16 @@ func dshIn(at place) *Agent { return dshAt(at) }
 // as at does. A distro's DSH_HOME can't be read, so there it is ~/.dsh.
 func dshAt(at place) *Agent {
 	dir := at.getenv("DSH_HOME")
+	next := false
+	if at.spell == nil {
+		next = dshNextSelected(at.home) || dshNextInstalled()
+		dir = dshHomeFor(at.home)
+	}
 	if dir == "" {
+		if at.spell == nil && next {
+			app := func() bool { return (&Agent{ID: "dsh"}).HasApp() || binAt("dsh") != "" }
+			return dshUnavailable("dsh", "DeepSeekRuntime", "", "deepseek-color", app)
+		}
 		dir = at.join(".dsh")
 	}
 	if at.spell != nil {
@@ -112,11 +121,20 @@ func dshAt(at place) *Agent {
 	}
 	// DeepSeek Harness Desktop, on this machine (a distro has none)
 	desktop := func() bool { return at.spell == nil && (&Agent{ID: "dsh"}).HasApp() }
+	app := func() bool { return desktop() || (dir != "" && agentDir(dir)) || binAt("dsh") != "" }
+	if at.spell == nil && next {
+		if _, _, err := dshActiveProfile(dir); err != nil {
+			return dshUnavailable("dsh", "DeepSeekRuntime", dir, "deepseek-color", app)
+		}
+	}
 	// the patch list magpie makes for a dsh with no profile yet: the desktop
 	// app's, else the web profile's; "" for a dsh before profiles, which
 	// reads config.yaml (liby233: a dsh 0.2 in WSL that hadn't booted a
 	// profile yet was wired in config.yaml, which it never reads)
 	fresh := func() string {
+		if at.spell == nil && next {
+			return dshProfileFile(dir, dshActiveProfileName(dir, "desktop"))
+		}
 		if desktop() {
 			return dshDesktopFile(dir)
 		}
@@ -131,12 +149,15 @@ func dshAt(at place) *Agent {
 	}
 	// the desktop app's profile is the one whose start is shown (#5222)
 	lead := func() string {
+		if at.spell == nil && next {
+			return dshActiveProfileName(dir, "desktop")
+		}
 		if desktop() {
 			return "desktop"
 		}
 		return ""
 	}
-	a := dshOn(at, dir, "dsh", fresh, lead)
+	a := dshOnProfile(at, dir, "dsh", fresh, lead, at.spell == nil && next)
 	a.ID, a.Name, a.Icon, a.Aliases = "dsh", "DeepSeek Harness", "deepseek-color", []string{"deepseek-harness"}
 	a.UA = []string{"deepseek-harness"}
 	a.Bin = "dsh"
@@ -144,7 +165,7 @@ func dshAt(at place) *Agent {
 	a.sign = desktop
 	a.Notice = func() string {
 		var notes []string
-		if desktop() && dshUnopened(dir) {
+		if desktop() && dshUnbooted(fresh()) {
 			// nothing of dsh's runs on it yet to be restarted
 			notes = append(notes, noticeDsh5.String())
 		} else if len(dshProfiles(dir)) > 0 {
@@ -168,7 +189,7 @@ func dshAt(at place) *Agent {
 	}
 	// what magpie made for a desktop app never opened goes (#2279)
 	a.Restore = func() error {
-		if err := dshTidyUnopened(dir); err != nil {
+		if err := dshTidyMade(dir, fresh()); err != nil {
 			return err
 		}
 		return dshTidyUnbooted(dir)
@@ -188,6 +209,13 @@ func dshModern(dir string, fresh func() string) bool {
 // start is shown ("" for the first). The caller names the agent, and gives
 // it its sign, notice and restore.
 func dshOn(at place, dir, list string, fresh, lead func() string) *Agent {
+	return dshOnProfile(at, dir, list, fresh, lead, false)
+}
+
+// dshOnProfile is dshOn with strictLead: the profile lead names is the one
+// Desktop Next uses, so Path, Joined and Check look there even when another
+// profile was made first. A pick makes that profile when it is missing.
+func dshOnProfile(at place, dir, list string, fresh, lead func() string, strictLead bool) *Agent {
 	// the gateway's address as dsh's route has it: behind the prefix a
 	// local proxy took it through, when it did (DshThrough)
 	gw := func() string {
@@ -199,6 +227,17 @@ func dshOn(at place, dir, list string, fresh, lead func() string) *Agent {
 	// profiles' patch lists, or one magpie makes, are what dsh reads
 	modern := func() bool { return dshModern(dir, fresh) }
 	path := filepath.Join(dir, "config.yaml")
+	leadPath := func() string {
+		name := lead()
+		if name == "" {
+			return ""
+		}
+		f := dshProfileFile(dir, name)
+		if isFile(f) || strictLead {
+			return f
+		}
+		return dshLead(dir, name)
+	}
 	// a stopped distro's folder is never listed: that starts it (#3896)
 	var files []string
 	if !at.cold {
@@ -209,19 +248,29 @@ func dshOn(at place, dir, list string, fresh, lead func() string) *Agent {
 	} else if f := fresh(); f != "" {
 		path = f
 	}
+	if strictLead {
+		if f := leadPath(); f != "" {
+			path = f
+		}
+	}
 	joined := func() bool {
-		files := dshProfilesHeld(dir)
-		if len(files) == 0 {
+		f := ""
+		if strictLead {
+			f = leadPath()
+		} else if files := dshProfilesHeld(dir); len(files) > 0 {
+			f = files[0]
+		}
+		if f == "" {
 			return false
 		}
-		_, items, err := dshLook(files[0]) // dshOver changes a copy
+		_, items, err := dshLook(f) // dshOver changes a copy
 		return err == nil && dshWired(dshOver(dir, items))
 	}
 	a := &Agent{
 		Spelled: prefixed,
 		Dir:     dir, Path: path,
 		Sync:  func() error { return dshSyncFresh(at, dir, gw(), fresh) },
-		Check: func() string { return dshCheck(dir, gw()) },
+		Check: func() string { return dshCheck(dir, gw(), lead()) },
 		// a model of DeepSeek's own picked in dsh (saved in its settings)
 		// leaves magpie's route in its list: dsh is still connected, its
 		// /model has magpie's models beside DeepSeek's (Fate on Discord:
@@ -230,7 +279,7 @@ func dshOn(at place, dir, list string, fresh, lead func() string) *Agent {
 		// connected so, Disconnect takes the route out, the start magpie
 		// wrote and its key; the model picked in dsh stays its own
 		Unwire: func() error {
-			if usesMagpie(dshGet(dir, "")) {
+			if usesMagpie(dshGet(dir, lead())) {
 				return nil // the model set back does it all
 			}
 			dshWrites.Lock()
@@ -258,7 +307,7 @@ func dshOn(at place, dir, list string, fresh, lead func() string) *Agent {
 				// the desktop app not opened yet, or a dsh that hasn't
 				// booted a profile: the profile is made as dsh makes it,
 				// and dsh keeps the patch list it finds (#2279, liby233)
-				if v != "" && len(dshProfiles(dir)) == 0 {
+				if v != "" && (strictLead || len(dshProfiles(dir)) == 0) {
 					if f := fresh(); f != "" {
 						if err := dshMakeProfile(f); err != nil {
 							return err
@@ -340,9 +389,10 @@ func dshCompactField(joined func() bool, list string) Field {
 }
 
 // dshApps are the homes of the apps that run a dsh of their own on a home
-// apart from ~/.dsh (DS Bot's), by folder, each with the id of the agent
-// whose model list magpie writes there: a model taken out of DS Bot's list
-// in magpie is not written into its home. Filled as each agent is built.
+// apart from ~/.dsh (DS Bot's and DSH Desktop Beta's), by folder, each with
+// the id of the agent whose model list magpie writes there: a model taken
+// out of one app's list in magpie is not written into its home. Filled as
+// each agent is built.
 var dshApps sync.Map
 
 // dshListFor is the agent whose models magpie writes into the dsh file or
@@ -367,15 +417,25 @@ func dshListFor(path string) string {
 // own there (DS Bot's): that home is the app's, not dsh's (#5624).
 func DshAppHome(dir string) bool { return dshListFor(dir) != "dsh" }
 
-// dshProfiles are the profiles' patch lists (dsh 0.1.5 on), web's first.
+// dshProfiles are the profiles' patch lists (dsh 0.1.5 on). The profile
+// desktop-next.json names is first; otherwise web is first.
 func dshProfiles(dir string) []string {
 	files, _ := filepath.Glob(filepath.Join(dir, "profiles", "*", "cordis.patch.yml"))
+	active, named, err := dshActiveProfile(dir)
+	if err != nil {
+		return nil
+	}
 	var web, rest []string
 	for _, f := range files {
 		if filepath.Base(filepath.Dir(f)) == "web" {
 			web = append(web, f)
 		} else {
 			rest = append(rest, f)
+		}
+	}
+	if named {
+		if f := dshProfileIn(active, append(web, rest...)); f != "" {
+			return append([]string{f}, slices.DeleteFunc(append(append([]string{}, web...), rest...), func(p string) bool { return p == f })...)
 		}
 	}
 	return append(web, rest...)
@@ -463,11 +523,6 @@ func dshMakeProfile(f string) error {
 	return os.WriteFile(f, []byte(dshProfileTemplate), 0o644)
 }
 
-// dshUnopened says the desktop app's profile is one magpie made and the
-// app hasn't started on yet: it has no package.json, which the app's first
-// start writes.
-func dshUnopened(dir string) bool { return dshUnbooted(dshDesktopFile(dir)) }
-
 // dshUnbooted says the profile whose patch list is f is one magpie made and
 // dsh hasn't booted yet: it has no package.json, which dsh's first boot of
 // it writes (initProfile).
@@ -479,14 +534,8 @@ func dshUnbooted(f string) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
-// dshTidyUnopened takes out, on Disconnect, what magpie made for a desktop
-// app never opened since: the profile's patch list back to dsh's template
-// with nothing beside it, and the folders that leaves empty. A patch list
-// holding anything else, or a profile the app has started on, stays.
-func dshTidyUnopened(dir string) error { return dshTidyMade(dir, dshDesktopFile(dir)) }
-
-// dshTidyUnbooted is dshTidyUnopened for the web profile magpie made for a
-// dsh CLI that has booted none (liby233).
+// dshTidyUnbooted takes out, on Disconnect, what magpie made for a dsh CLI
+// profile never booted (liby233).
 func dshTidyUnbooted(dir string) error { return dshTidyMade(dir, dshWebFile(dir)) }
 
 // dshTidyMade takes out the profile patch list f magpie made, while dsh has
@@ -1208,11 +1257,20 @@ func dshOverAll(dir string) []dshItem {
 // elsewhere, the model it starts on one the route doesn't list, or — since
 // 0.1.5 — the key it names gone from .env, or another key under that name in
 // dsh's own store, which it reads first.
-func dshCheck(dir, gw string) string {
-	if !usesMagpie(dshGet(dir, "")) {
+func dshCheck(dir, gw string, lead ...string) string {
+	name := ""
+	if len(lead) > 0 {
+		name = lead[0]
+	}
+	if !usesMagpie(dshGet(dir, name)) {
 		return ""
 	}
 	files := dshProfiles(dir)
+	if name != "" {
+		if f := dshProfileIn(name, files); f != "" {
+			files = append([]string{f}, slices.DeleteFunc(append([]string{}, files...), func(p string) bool { return p == f })...)
+		}
+	}
 	if len(files) == 0 {
 		path := filepath.Join(dir, "config.yaml")
 		_, items, _ := dshLook(path)
@@ -1394,6 +1452,9 @@ func dshSet(at place, dir, v, gw string) error {
 
 // dshSetLocked is dshSet with dshWrites held.
 func dshSetLocked(at place, dir, v, gw string) error {
+	if _, _, err := dshActiveProfile(dir); err != nil {
+		return err
+	}
 	ref, viaGateway := strings.CutPrefix(v, magpieID+"/")
 	if viaGateway && !isMagpie(ref) {
 		return fmt.Errorf("unknown model %q", v)
@@ -2455,21 +2516,30 @@ func dshBundledVersion(app desktopApp) string {
 // read fails its whole config, where a Gemini on the Chat route is only
 // translated.
 func dshSpeaksGemini(path string) bool {
-	if path == "" || dshListFor(path) != "dsh" {
+	if path == "" {
+		return false
+	}
+	list := dshListFor(path)
+	if list != "dsh" && list != dshBetaID {
 		return false
 	}
 	p := filepath.Clean(path)
 	var vs []string
 	distro := false
-	dshDistros.Range(func(k, v any) bool {
-		if rel, err := filepath.Rel(k.(string), p); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			vs, distro = []string{v.(string)}, true
-			return false
-		}
-		return true
-	})
+	if list == "dsh" {
+		dshDistros.Range(func(k, v any) bool {
+			if rel, err := filepath.Rel(k.(string), p); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				vs, distro = []string{v.(string)}, true
+				return false
+			}
+			return true
+		})
+	}
 	if !distro {
-		vs = provider.Held("dsh versions", func() []string {
+		vs = provider.Held("dsh versions\x00"+list, func() []string {
+			if list == dshBetaID {
+				return dshBetaVersion()
+			}
 			var out []string
 			for _, v := range []string{dshVersion(), dshAppVersion()} {
 				if v != "" {
@@ -2746,6 +2816,9 @@ func dshSync(dir, gw string) error {
 func dshSyncFresh(at place, dir, gw string, fresh func() string) error {
 	dshWrites.Lock()
 	defer dshWrites.Unlock()
+	if _, _, err := dshActiveProfile(dir); err != nil {
+		return err
+	}
 	models := dshModelsAt(dir)
 	files := dshProfiles(dir)
 	made := ""
@@ -3002,17 +3075,29 @@ func dshModelsStale(at, now time.Time) bool {
 }
 
 // dshHomesRounds are a round for each dsh home magpie keeps wired: dsh's
-// own, and DS Bot's, whose app runs its own dsh on a home of its own
-// (dsbotHome) and reads its patch list live as dsh does.
+// own (DSH NEXT's selected one while it is here), DSH Desktop Beta's, and
+// DS Bot's. Each home is resolved again on every round.
 func dshHomesRounds() []*dshRounds {
-	return []*dshRounds{{}, {home: dsbotDataDir, list: dsbotID}}
+	rounds := []*dshRounds{{}}
+	if dshBetaRoundHere() {
+		rounds = append(rounds, &dshRounds{home: dshBetaDataDir, list: dshBetaID})
+	}
+	return append(rounds, &dshRounds{home: dsbotDataDir, list: dsbotID})
 }
 
 // dshRoundsOnce does each of rounds once, and says what any could not write.
 func dshRoundsOnce(rounds []*dshRounds) string {
 	var trouble []string
+	seen := map[string]bool{}
 	for _, r := range rounds {
-		if t := r.once(); t != "" {
+		dir := r.dir()
+		if dir != "" {
+			if seen[dir] {
+				continue
+			}
+			seen[dir] = true
+		}
+		if t := r.onceAt(dir); t != "" {
 			trouble = append(trouble, t)
 		}
 	}
@@ -3136,16 +3221,17 @@ func dshWiredOnce() string {
 // once is dshWiredOnce, done only when something the round reads changed
 // since r's last round that found nothing to write.
 func (r *dshRounds) once() string {
+	return r.onceAt(r.dir())
+}
+
+// onceAt is once with the round's home already resolved.
+func (r *dshRounds) onceAt(dir string) string {
 	dshWrites.Lock()
 	defer dshWrites.Unlock()
-	home, list := r.home, r.list
-	if home == nil {
-		home = dshHome
-	}
+	list := r.list
 	if list == "" {
 		list = "dsh"
 	}
-	dir := home()
 	if dir == "" {
 		r.done = false
 		return ""
@@ -3194,8 +3280,19 @@ func (r *dshRounds) once() string {
 	return trouble
 }
 
+// dir is the home this round reads now, "" when it can't be told.
+func (r *dshRounds) dir() string {
+	if r.home != nil {
+		return r.home()
+	}
+	return dshHome()
+}
+
 // dshWiredWith is a round's work, with the models it writes the route from.
 func dshWiredWith(dir string, files []string, models []catalog.Model) string {
+	if _, _, err := dshActiveProfile(dir); err != nil {
+		return "reading dsh's active profile: " + err.Error()
+	}
 	var trouble []string
 	// a prefix a local proxy has put before the gateway stays (DshThrough)
 	gw := dshReach(dir, gateway.URL())
@@ -3256,14 +3353,31 @@ func dshWriteError(err error) string {
 	return err.Error()
 }
 
-// dshHome is where dsh keeps its profiles: $DSH_HOME, or ~/.dsh.
+// dshHome is where dsh keeps its profiles: DSH NEXT's selected home while
+// that app or its environment is here, else $DSH_HOME or ~/.dsh. "" when
+// DSH NEXT's locator is malformed: never a guessed fallback.
 func dshHome() string {
-	if dir := appdir.Getenv("DSH_HOME"); dir != "" {
-		return dir
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
+	}
+	return dshHomeFor(home)
+}
+
+// dshHomeFor is dshHome with the user's home supplied.
+func dshHomeFor(home string) string {
+	if home == "" {
+		return ""
+	}
+	if dshNextSelected(home) {
+		dir, ok := dshDesktopHomeIn("DSH NEXT", ".dsh", home)
+		if !ok {
+			return ""
+		}
+		return dir
+	}
+	if dir := appdir.Getenv("DSH_HOME"); dir != "" {
+		return dir
 	}
 	return filepath.Join(home, ".dsh")
 }
@@ -3561,8 +3675,15 @@ func dshFiles(dir string) []string {
 }
 
 // DshPatchFiles are the patch lists of the dsh whose home is dir, as magpie
-// writes them: every profile's (web's first), else config.yaml.
-func DshPatchFiles(dir string) []string { return dshFiles(dir) }
+// writes them: every profile's (the active one first), else config.yaml.
+// None when desktop-next.json is malformed: writing config.yaml then would
+// put a route where a dsh with profiles never reads it.
+func DshPatchFiles(dir string) []string {
+	if _, _, err := dshActiveProfile(dir); err != nil {
+		return nil
+	}
+	return dshFiles(dir)
+}
 
 // dshGetEffort reads the effort sessions start with, in the lead profile
 // (dshLead).
@@ -3593,6 +3714,9 @@ func dshGetEffort(dir, lead string) string {
 func dshSetEffort(dir, v, gw, lead string) error {
 	dshWrites.Lock()
 	defer dshWrites.Unlock()
+	if _, _, err := dshActiveProfile(dir); err != nil {
+		return err
+	}
 	files := dshProfiles(dir)
 	if len(files) > 0 {
 		if dshHomeHas(dir, "agent-default-model") {
