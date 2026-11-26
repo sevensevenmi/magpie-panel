@@ -111,6 +111,8 @@ var Vars = []string{
 	"OPENCLAW_CONFIG_PATH", "OPENCLAW_STATE_DIR", "OPENCLAW_PROFILE", "OPENCLAW_HOME",
 	// MiMo Code, MiniMax Code, OpenHanako, Hermes, dsh, WorkBuddy, CodeBuddy Code
 	"MIMOCODE_HOME", "MINIMAX_DATA_DIR", "MAVIS_DATA_DIR", "HANA_HOME", "PASEO_HOME", "HERMES_HOME", "DSH_HOME",
+	// DSH NEXT's and DSH Desktop Beta's chosen data folder
+	"DSH_DESKTOP_NEXT_HOME",
 	// dsh-web's search provider, which magpie leaves to the user when set
 	"DSH_WEB_SEARCH_PROVIDER",
 	"WORKBUDDY_CONFIG_DIR", "CODEBUDDY_CONFIG_DIR",

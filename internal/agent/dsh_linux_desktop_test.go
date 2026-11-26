@@ -227,6 +227,129 @@ func TestDshLinuxDesktopEntry(t *testing.T) {
 	}
 }
 
+// DSH NEXT and the two DSH Desktop builds ship AppImages with no scheme.
+// Their artifact names are exact release families, and the Beta family is
+// not allowed to match the stable one by prefix.
+func TestDshAppImageArtifactNames(t *testing.T) {
+	next := desktopApps["dsh"].more[0].onLinux
+	stable := desktopApps["dsh"].more[1].onLinux
+	beta := desktopApps["dsh-beta"].onLinux
+	for _, tc := range []struct {
+		name string
+		l    *linuxApp
+		want bool
+	}{
+		{"DSH-NEXT-2.0.24-next-x86_64.AppImage", next, true},
+		{"DSH-NEXT-2.0.24-next-arm64.AppImage", next, true},
+		{"DSH-NEXT-not-a-version-x86_64.AppImage", next, false},
+		{"DSH-Desktop-2.0.18-x86_64.AppImage", stable, true},
+		{"DSH-Desktop-2.0.18-arm64.AppImage", stable, true},
+		{"DSH-Desktop-Beta-2.0.24-beta.2-x86_64.AppImage", stable, false},
+		{"DSH-Desktop-Beta-2.0.24-beta.2-x86_64.AppImage", beta, true},
+		{"DSH-Desktop-Beta-2.0.24-beta.2-arm64.AppImage", beta, true},
+		{"DSH-Desktop-2.0.18-x86_64.AppImage", beta, false},
+		{"other.AppImage", next, false},
+	} {
+		if got := tc.l.appImageName(tc.name); got != tc.want {
+			t.Errorf("%s on %s: %v, want %v", tc.name, tc.l.name, got, tc.want)
+		}
+	}
+}
+
+// An AppImage integration entry is trusted only in an XDG applications
+// folder, only for the exact vendor desktop id or AppImage identifier, and
+// only while its exact release artifact is an executable file.
+func TestDshLinuxAppImageEntry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a Linux executable can't be staged on a Windows host")
+	}
+	home := dshLinuxSandbox(t)
+	user := filepath.Join(home, ".local", "share", "applications")
+	image := filepath.Join(home, "Applications", "DSH-NEXT-2.0.24-next-x86_64.AppImage")
+	entry := filepath.Join(user, "appimagekit_deadbeef-DSH_NEXT.desktop")
+	body := func(name, exec, extra string) string {
+		return "[Desktop Entry]\nType=Application\nName=" + name + "\nExec=\"" + exec + "\" --no-sandbox %U\n" + extra
+	}
+	reset := func() {
+		entryScans.Lock()
+		entryScans.m = map[string]entryScan{}
+		entryScans.Unlock()
+	}
+	next := &Agent{ID: "dsh", Bin: "magpie-test-gone-dsh"}
+	beta := &Agent{ID: "dsh-beta"}
+
+	writeTestFile(t, entry, body("DSH NEXT", image, "X-AppImage-Identifier=deadbeef\n"), 0o644)
+	if next.HasApp() {
+		t.Fatal("an AppImage entry whose file is absent counts")
+	}
+	writeTestFile(t, image, "\x7fELF", 0o755)
+	reset()
+	if !next.HasApp() {
+		t.Fatal("the integrated AppImage was not found")
+	}
+
+	// A correctly named image alone is not an install: no folder is scanned
+	// beyond XDG's applications directories.
+	os.Remove(entry)
+	reset()
+	if next.HasApp() {
+		t.Fatal("an AppImage with no desktop entry was found")
+	}
+
+	// The exact vendor id may omit AppImageLauncher's identifier.
+	writeTestFile(t, filepath.Join(user, "dsh-desktop-next.desktop"), body("DSH NEXT", image, ""), 0o644)
+	reset()
+	if !next.HasApp() {
+		t.Fatal("the vendor desktop id was not found")
+	}
+
+	// An exact id with a lookalike image, a relative Exec, a non-executable
+	// file, a hidden entry, or a non-Application type is not proof.
+	other := filepath.Join(home, "Applications", "other.AppImage")
+	writeTestFile(t, other, "\x7fELF", 0o755)
+	for _, tc := range []struct {
+		name string
+		body string
+		file string
+		mode os.FileMode
+	}{
+		{"generic image", body("DSH NEXT", other, ""), filepath.Join(user, "dsh-desktop-next.desktop"), 0o644},
+		{"relative Exec", body("DSH NEXT", "DSH-NEXT-2.0.24-next-x86_64.AppImage", ""), filepath.Join(user, "dsh-desktop-next.desktop"), 0o644},
+		{"not executable", body("DSH NEXT", image, ""), filepath.Join(user, "dsh-desktop-next.desktop"), 0o644},
+		{"hidden", body("DSH NEXT", image, "Hidden=true\n"), filepath.Join(user, "dsh-desktop-next.desktop"), 0o644},
+		{"wrong type", strings.Replace(body("DSH NEXT", image, ""), "Type=Application", "Type=Link", 1), filepath.Join(user, "dsh-desktop-next.desktop"), 0o644},
+	} {
+		if tc.name == "not executable" {
+			if err := os.Chmod(image, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.Chmod(image, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, tc.file, tc.body, tc.mode)
+		reset()
+		if next.HasApp() {
+			t.Errorf("%s: counted", tc.name)
+		}
+	}
+	if err := os.Chmod(image, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The Beta artifact belongs to the Beta row, never stable dsh.
+	os.Remove(filepath.Join(user, "dsh-desktop-next.desktop"))
+	betaImage := filepath.Join(home, "Applications", "DSH-Desktop-Beta-2.0.24-beta.2-x86_64.AppImage")
+	writeTestFile(t, betaImage, "\x7fELF", 0o755)
+	writeTestFile(t, filepath.Join(user, "dsh-desktop-beta.desktop"), body("DSH Desktop Beta", betaImage, ""), 0o644)
+	reset()
+	if next.HasApp() {
+		t.Fatal("the Beta AppImage counted as stable dsh")
+	}
+	if !beta.HasApp() {
+		t.Fatal("the Beta AppImage was not found on dsh-beta")
+	}
+}
+
 // With the app on Linux and no profile yet, magpie wires the app's
 // profile, profiles/desktop, as on macOS and Windows: the web profile is a
 // dsh CLI's, which this machine doesn't have.

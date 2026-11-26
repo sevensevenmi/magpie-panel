@@ -55,7 +55,8 @@ const dshNextManifest = `{
 // DeepSeek Harness Desktop does, so it is dsh's app: with it alone, no
 // CLI and no ~/.dsh, the dsh row is listed, not gone, and wires the
 // desktop profile. So is the same vendor's DSH Desktop. Another app under
-// the name is not, nor is DSH Desktop Beta, which keeps ~/.dsh-beta.
+// the name is not, nor is DSH Desktop Beta, which is its own dsh-beta row
+// on ~/.dsh-beta.
 func TestDshCommunityShells(t *testing.T) {
 	judgeFor(t, "darwin")
 	home, dir, apps, reg := dshOfficialHome(t)
@@ -145,6 +146,9 @@ func TestDshCommunityShells(t *testing.T) {
 		if got := uuid.NewSHA1(ns, []byte(b.id)).String(); got != b.guid {
 			t.Fatalf("%s: guid %s, the installer's %s", b.id, b.guid, got)
 		}
+	}
+	if b := desktopApps[dshBetaID]; uuid.NewSHA1(ns, []byte(b.id)).String() != b.guid {
+		t.Fatalf("%s: guid %s, the installer's %s", b.id, uuid.NewSHA1(ns, []byte(b.id)).String(), b.guid)
 	}
 	writeT(t, filepath.Join(apps, "DSH NEXT", "DSH NEXT.exe"), "MZ")
 	if a := gone(); !a.Detected() || a.CLIMissing() {

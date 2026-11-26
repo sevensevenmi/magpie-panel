@@ -577,7 +577,7 @@ func slashAgent(t *Target) bool {
 	id, _, _ := strings.Cut(t.Agent.ID, "@")
 	id, _, _ = strings.Cut(id, "#")
 	switch id {
-	case "codex", "pi", "droid", "dsh":
+	case "codex", "pi", "droid", "dsh", "dsh-beta":
 		return true
 	}
 	return false

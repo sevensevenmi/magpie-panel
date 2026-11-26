@@ -251,19 +251,21 @@ func targetOf(a *agent.Agent) *Target {
 		t.MCP, t.MCPVia = piMCP(h, d, v, piGlobalRoots())
 		t.Skills = filepath.Join(d, "skills")
 		t.SharedToo = since(v, piSharedSince)
-	case "dsh":
+	case "dsh", "dsh-beta":
 		// DeepSeek Harness reads $DSH_HOME/AGENTS.md and $DSH_HOME/skills;
 		// its MCP servers are @deepseek-ai/dsh-mcp-client rows its patch
 		// lists insert, every profile's
 		d := a.Dir
-		if agent.DshAppHome(d) {
+		if a.ID == "dsh" && agent.DshAppHome(d) {
 			// DSH_HOME names DS Bot's folder (#5624): what is there is
 			// DS Bot's, given to it by its own target
 			return nil
 		}
 		t.Instructions = filepath.Join(d, "AGENTS.md")
 		files := agent.DshPatchFiles(d)
-		t.MCP = &mcpFile{Path: files[0], Also: files[1:], Format: fmtDsh}
+		if len(files) > 0 {
+			t.MCP = &mcpFile{Path: files[0], Also: files[1:], Format: fmtDsh}
+		}
 		t.Skills = filepath.Join(d, "skills")
 	case "ds-bot":
 		// DS Bot's own DSH (0.2.2-rc.1 in DS Bot 0.3.8) runs on its data
@@ -1199,7 +1201,7 @@ func takesCopies(id string) bool { return id == "trae-cn" }
 // does (core/package-manager.js, userAgentsSkillsDir, @code-yeongyu/senpi
 // 2026.5.13). ZCode reads it beside ~/.zcode/skills (#4987). mu is Pi
 // 1.4.0 (core/package-manager.ts, qybaihe/mu b71cd18).
-var readsShared = []string{"codex", "gemini", "opencode", "deveco", "crush", "dsh", "ds-bot", "commandcode", "devin", "droid", "cline", "grok", "kigi", "grok-app", "fx", "alma", "kimi", "omo", "zcode", "mu"}
+var readsShared = []string{"codex", "gemini", "opencode", "deveco", "crush", "dsh", "dsh-beta", "ds-bot", "commandcode", "devin", "droid", "cline", "grok", "kigi", "grok-app", "fx", "alma", "kimi", "omo", "zcode", "mu"}
 
 // Pi reads ~/.agents/skills from 0.54.0 (2026-02-19, its CHANGELOG: "Added
 // default skill auto-discovery for .agents/skills locations … global

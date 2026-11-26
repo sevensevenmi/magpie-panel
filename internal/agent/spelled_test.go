@@ -13,7 +13,7 @@ import (
 // own deepseek/deepseek-v4-pro).
 func TestOwnProviderNamedAsMagpies(t *testing.T) {
 	ids := []string{"agy", "opencode", "openchamber", "mimocode", "deveco", "pi", "aside", "omo", "prime-agent", "mu", "goose", "zed", "vscode",
-		"crush", "dsh", "ds-bot", "commandcode", "fx", "omp", "hermes", "morph", "kimi", "empryo", "nanobot", "miniq", "paimon", "craft-agents", "minimax-code", "droid",
+		"crush", "dsh", "dsh-beta", "ds-bot", "commandcode", "fx", "omp", "hermes", "morph", "kimi", "empryo", "nanobot", "miniq", "paimon", "craft-agents", "minimax-code", "droid",
 		"qoder", "qoder-cn", "grok", "kigi", "atomcode", "cline", "snow", "qwenpaw", "open-code-review"}
 	for _, id := range ids {
 		t.Run(id, func(t *testing.T) {
