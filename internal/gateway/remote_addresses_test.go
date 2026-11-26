@@ -2,7 +2,10 @@ package gateway
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -60,5 +63,70 @@ func TestRemoteMagpieAskedAtItsOtherAddress(t *testing.T) {
 	}
 	if r := restingNow(t); len(r) > 0 {
 		t.Errorf("rests: %v", r)
+	}
+}
+
+// A socket handshake carries the key before Dispatch can fail over. The
+// turn asks the unkeyed proof first: an address that doesn't prove is
+// sent no key, the other address answers, and the socket turn goes over
+// HTTP there.
+func TestRemoteMagpieSocketProvesBeforeItsKey(t *testing.T) {
+	fresh(t)
+	socketOn(t)
+	const key = "sk-magpie-office"
+	var primaryKeys atomic.Int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == provider.RemoteProvePath {
+			http.Error(w, "not this remote", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "" || r.Header.Get("X-Api-Key") != "" {
+			primaryKeys.Add(1)
+		}
+		http.Error(w, "not this remote", http.StatusBadRequest)
+	}))
+	t.Cleanup(primary.Close)
+	f := &fakeSocketBackend{whole: true, path: "/v1/responses"}
+	var fallbackKey atomic.Value
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == provider.RemoteProvePath {
+			var in struct {
+				Nonce string `json:"nonce"`
+				KeyID string `json:"key_id"`
+			}
+			json.NewDecoder(r.Body).Decode(&in)
+			if in.KeyID != provider.RemoteKeyID(key) {
+				http.Error(w, "no such key", http.StatusNotFound)
+				return
+			}
+			at := r.Context().Value(http.LocalAddrContextKey).(net.Addr).String()
+			json.NewEncoder(w).Encode(map[string]string{"proof": hex.EncodeToString(provider.RemoteProof(key, in.Nonce, at))})
+			return
+		}
+		if sent := r.Header.Get("Authorization") + "\n" + r.Header.Get("X-Api-Key"); strings.TrimSpace(sent) != "" {
+			fallbackKey.Store(sent)
+		}
+		f.ServeHTTP(w, r)
+	}))
+	t.Cleanup(fallback.Close)
+	if err := provider.Save(provider.Provider{ID: "office", Name: "Office", Preset: provider.RemoteMagpiePreset, Key: key,
+		Chat: primary.URL, Addresses: []string{fallback.URL}, Socket: provider.SocketOn, Models: []string{"m"}}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"office/m","stream":true,"input":"ping"}`))
+	req.Header.Set("Content-Type", "application/json")
+	New().Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "pong") {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	if primaryKeys.Load() != 0 {
+		t.Fatalf("the address that didn't prove was sent the key %d times", primaryKeys.Load())
+	}
+	if v, _ := fallbackKey.Load().(string); !strings.Contains(v, key) {
+		t.Fatalf("the address that proved was sent %q; want its key", v)
+	}
+	if posts, sockets := f.counts(); posts != 1 || sockets != 0 {
+		t.Fatalf("%d HTTP posts, %d socket turns; want the turn over HTTP at the address that proved", posts, sockets)
 	}
 }

@@ -155,6 +155,48 @@ func TestFailoverAsksTheNextAddress(t *testing.T) {
 	}
 }
 
+// A fallback that keeps answering does not stay first forever: after
+// failoverFresh the main address is tried again, and takes its place back
+// when it answers.
+func TestFailoverReturnsToMainAddress(t *testing.T) {
+	n := newFakeNet()
+	lan, ts := &seen{}, &seen{}
+	n.serve(t, "lan.test", lan.handler(200))
+	n.serve(t, "ts.test", ts.handler(200))
+	n.set(n.dead, "lan.test", true)
+	ctx := WithFailover(context.Background(), "http://lan.test", "http://ts.test")
+	f, _ := ctx.Value(failoverKey{}).(failover)
+	rt := n.dispatch()
+
+	post(t, rt, ctx, "http://lan.test/v1/models", "")
+	lastAnswered.Lock()
+	started := lastAnswered.m[f.key].at
+	lastAnswered.Unlock()
+	n.set(n.dead, "lan.test", false)
+	post(t, rt, ctx, "http://lan.test/v1/models", "")
+	if ts.n() != 2 || n.count("lan.test") != 1 {
+		t.Fatalf("Tailscale asked %d times, LAN dialled %d; want the fresh fallback kept", ts.n(), n.count("lan.test"))
+	}
+
+	lastAnswered.Lock()
+	v := lastAnswered.m[f.key]
+	if !v.at.Equal(started) {
+		t.Fatalf("the fallback's preference restarted at %v from %v", v.at, started)
+	}
+	v.at = time.Now().Add(-failoverFresh)
+	lastAnswered.m[f.key] = v
+	lastAnswered.Unlock()
+
+	post(t, rt, ctx, "http://lan.test/v1/models", "")
+	if lan.n() != 1 || ts.n() != 2 || n.count("lan.test") != 2 {
+		t.Fatalf("LAN asked %d times, Tailscale %d, LAN dialled %d; want the recovered main address first", lan.n(), ts.n(), n.count("lan.test"))
+	}
+	post(t, rt, ctx, "http://lan.test/v1/models", "")
+	if lan.n() != 2 || ts.n() != 2 {
+		t.Fatalf("LAN asked %d times, Tailscale %d; want the main address kept", lan.n(), ts.n())
+	}
+}
+
 // An answer from the remote, a refusal or a server error among them, is
 // its own: the request isn't sent again elsewhere.
 func TestFailoverKeepsTheRemotesAnswer(t *testing.T) {

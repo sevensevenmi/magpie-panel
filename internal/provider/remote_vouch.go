@@ -13,11 +13,16 @@ package provider
 // an address reached in plain http at a private or link-local IP, or a
 // .local name, is sent nothing keyed until it proves it holds the
 // provider's gateway key (proves), the proof asked the way the request
-// itself would go. A name is resolved here and connected to at the IP
-// that proved. An https address is the server its certificate says it
-// is, and a Tailscale address (100.64.0.0/10) is the peer WireGuard says
-// it is: neither is asked to prove. A verdict is kept for the networks
-// this computer is on (vouchPrint) for a while.
+// itself would go. A direct name is resolved here and connected to at
+// the IP that proved; through a provider proxy the name is left to the
+// proxy. A direct https address is the server its certificate says it
+// is, and a direct Tailscale address (100.64.0.0/10) is the peer
+// WireGuard says it is: neither is asked to prove. A verdict is kept for
+// the networks this computer is on (vouchPrint) for a while. A provider
+// proxy or a Responses socket asks first even for an address it would
+// otherwise trust: a proxy can answer an unreachable address with its
+// own 502, and a socket handshake carries the key before Dispatch can
+// fail over.
 
 import (
 	"context"
@@ -25,6 +30,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -92,15 +98,21 @@ var vouchSeen = struct {
 // vouch is p's netproxy.Vouch: what of its addresses may be sent its key.
 func (p Provider) vouch() netproxy.Vouch {
 	key := p.Key
+	proxy := strings.TrimSpace(p.ProxyChoice())
+	throughProxy := proxy != "" && !strings.EqualFold(proxy, "direct")
+	probeAll := throughProxy || p.SocketMode() != ""
 	return func(ctx context.Context, root *url.URL, ask func(*http.Request) (*http.Response, error)) (string, bool) {
-		if key == "" || !strings.EqualFold(root.Scheme, "http") || !vouchHost(root.Hostname()) {
+		if key == "" {
 			return "", true
 		}
-		port := root.Port()
-		if port == "" {
-			port = "80"
+		plainHTTP := strings.EqualFold(root.Scheme, "http")
+		secureHTTP := strings.EqualFold(root.Scheme, "https")
+		private := plainHTTP && vouchHost(root.Hostname())
+		if !private && !probeAll {
+			return "", true
 		}
-		seen := root.String() + "\n" + RemoteKeyID(key) + "\n" + vouchNets()
+		seen := strings.Join([]string{root.String(), RemoteKeyID(key), vouchNets(), proxy, p.SocketMode(),
+			strconv.FormatBool(p.InsecureTLS), p.ServerPin}, "\n")
 		vouchSeen.Lock()
 		v, had := vouchSeen.m[seen]
 		vouchSeen.Unlock()
@@ -108,21 +120,33 @@ func (p Provider) vouch() netproxy.Vouch {
 			return v.at, v.ok
 		}
 		v = vouched{until: time.Now().Add(vouchMissed)}
-		hosts := []string{root.Hostname()}
-		if net.ParseIP(root.Hostname()) == nil {
-			lctx, cancel := context.WithTimeout(ctx, seekAnswer)
-			hosts, _ = vouchLookup(lctx, root.Hostname())
-			cancel()
-			if len(hosts) > 4 {
-				hosts = hosts[:4]
+		proof := private || plainHTTP && !tailscaleHost(root.Hostname()) || secureHTTP && p.InsecureTLS && p.ServerPin == ""
+		if proof {
+			port := root.Port()
+			if port == "" {
+				port = "80"
+				if secureHTTP {
+					port = "443"
+				}
 			}
-		}
-		for _, h := range hosts {
-			at := net.JoinHostPort(h, port)
-			if provesVia(ctx, "http", at, strings.TrimRight(root.Path, "/"), key, ask) {
-				v = vouched{at: at, ok: true, until: time.Now().Add(vouchKept)}
-				break
+			hosts := []string{root.Hostname()}
+			if net.ParseIP(root.Hostname()) == nil && !throughProxy {
+				lctx, cancel := context.WithTimeout(ctx, seekAnswer)
+				hosts, _ = vouchLookup(lctx, root.Hostname())
+				cancel()
+				if len(hosts) > 4 {
+					hosts = hosts[:4]
+				}
 			}
+			for _, h := range hosts {
+				at := net.JoinHostPort(h, port)
+				if provesVia(ctx, root.Scheme, at, strings.TrimRight(root.Path, "/"), key, ask) {
+					v = vouched{at: at, ok: true, until: time.Now().Add(vouchKept)}
+					break
+				}
+			}
+		} else if healthyVia(ctx, root, ask) {
+			v = vouched{ok: true, until: time.Now().Add(vouchKept)}
 		}
 		vouchSeen.Lock()
 		if len(vouchSeen.m) >= 256 {
@@ -132,4 +156,39 @@ func (p Provider) vouch() netproxy.Vouch {
 		vouchSeen.Unlock()
 		return v.at, v.ok
 	}
+}
+
+// tailscaleHost says host is in Tailscale's CGNAT range, the peer
+// WireGuard says it is.
+func tailscaleHost(host string) bool {
+	ip := net.ParseIP(strings.TrimSuffix(host, ".")).To4()
+	return ip != nil && ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127
+}
+
+// healthyVia asks root for an unkeyed HTTP answer. Through https, a
+// response after TLS is from the server the certificate names; through
+// http, a proxy's own gateway errors don't count as the remote answering.
+func healthyVia(ctx context.Context, root *url.URL, ask func(*http.Request) (*http.Response, error)) bool {
+	u := *root
+	u.Path = strings.TrimRight(root.Path, "/") + RemoteProvePath
+	u.RawPath = ""
+	ctx, cancel := context.WithTimeout(ctx, seekAnswer)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Accept", "application/json")
+	res, err := ask(req)
+	if err != nil {
+		return false
+	}
+	defer res.Body.Close()
+	if strings.EqualFold(root.Scheme, "https") {
+		return res.TLS != nil
+	}
+	if res.StatusCode == http.StatusProxyAuthRequired || res.StatusCode >= 500 {
+		return false
+	}
+	return true
 }

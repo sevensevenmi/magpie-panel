@@ -19,6 +19,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/tidwall/gjson"
 
+	"github.com/yetone/magpie/internal/netproxy"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -186,6 +187,15 @@ func (t codexSocket) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	turn, shun := provider.SocketTurn(req)
 	if !turn || (shun && codexShunned(req.URL.Host)) {
+		return t.next.RoundTrip(req)
+	}
+	// A socket handshake carries the key before Dispatch can fail over.
+	// Ask the same unkeyed health/proof questions first; when another
+	// address answers, or a name was pinned to the IP that proved, let
+	// the HTTP path carry the turn instead.
+	if root, failover, pinned, err := netproxy.Probe(req, func(r *http.Request) (*http.Response, error) {
+		return t.next.RoundTrip(r.WithContext(netproxy.WithoutFailover(r.Context())))
+	}); failover && (err != nil || root != 0 || pinned) {
 		return t.next.RoundTrip(req)
 	}
 	res, err := t.overSocket(req, shun, shun && provider.SocketRelay(req))

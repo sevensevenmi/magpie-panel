@@ -29,6 +29,15 @@ type failoverKey struct{}
 
 type vouchKey struct{}
 
+type noFailoverKey struct{}
+
+// WithoutFailover is ctx for a request that must go to the address its
+// URL names, not to another of the failover's addresses. A Vouch asks
+// through it while deciding which address may receive the keyed request.
+func WithoutFailover(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noFailoverKey{}, true)
+}
+
 // Vouch says whether root, one of a failover's addresses, may be sent a
 // request made on its remote's behalf, which carries its key: an
 // address on a network this computer may not be on now (a café's, where
@@ -90,12 +99,22 @@ func WithFailover(ctx context.Context, roots ...string) context.Context {
 // left is waited for before the next is asked.
 var failoverTry = 5 * time.Second
 
-// lastAnswered keeps, for each set of addresses (failover.key), the index
-// of the one that last took a connection.
+// failoverFresh is how long a fallback that took over stays first. After
+// it, the first address is asked first again, so a recovered main
+// address takes its place back even while the fallback keeps answering.
+var failoverFresh = 30 * time.Second
+
+type answeredAt struct {
+	index int
+	at    time.Time
+}
+
+// lastAnswered keeps, for each set of addresses (failover.key), the
+// fallback that took over, and when it did.
 var lastAnswered = struct {
 	sync.Mutex
-	m map[string]int
-}{m: map[string]int{}}
+	m map[string]answeredAt
+}{m: map[string]answeredAt{}}
 
 // under says which of f's roots u is at, and the path below it.
 func (f failover) under(u *url.URL) (int, string, bool) {
@@ -130,8 +149,16 @@ func rootKey(u *url.URL) string {
 // in the order given.
 func (f failover) order() []int {
 	lastAnswered.Lock()
-	first := lastAnswered.m[f.key]
+	v, ok := lastAnswered.m[f.key]
+	if ok && time.Since(v.at) >= failoverFresh {
+		delete(lastAnswered.m, f.key)
+		ok = false
+	}
 	lastAnswered.Unlock()
+	first := 0
+	if ok {
+		first = v.index
+	}
 	out := []int{first}
 	for i := range f.roots {
 		if i != first {
@@ -144,14 +171,62 @@ func (f failover) order() []int {
 func (f failover) answered(i int) {
 	lastAnswered.Lock()
 	defer lastAnswered.Unlock()
-	if len(lastAnswered.m) >= 256 {
-		clear(lastAnswered.m)
-	}
 	if i == 0 {
 		delete(lastAnswered.m, f.key)
 		return
 	}
-	lastAnswered.m[f.key] = i
+	if v, ok := lastAnswered.m[f.key]; ok && v.index == i {
+		return
+	}
+	if len(lastAnswered.m) >= 256 {
+		clear(lastAnswered.m)
+	}
+	lastAnswered.m[f.key] = answeredAt{index: i, at: time.Now()}
+}
+
+// Probe asks the failover's Vouch about each address in order, without
+// sending the keyed request. It returns the index chosen, whether the
+// request was for one of the failover's addresses, whether the address
+// was pinned to another host, and an error when none proved. A socket
+// turn uses it before opening its keyed handshake; the HTTP path uses the
+// same answers as it tries each address.
+func Probe(req *http.Request, send func(*http.Request) (*http.Response, error)) (int, bool, bool, error) {
+	f, has := req.Context().Value(failoverKey{}).(failover)
+	if !has || req.URL == nil {
+		return 0, false, false, nil
+	}
+	at, rest, under := f.under(req.URL)
+	if !under {
+		return 0, false, false, nil
+	}
+	vouch, _ := req.Context().Value(vouchKey{}).(Vouch)
+	if vouch == nil {
+		return f.order()[0], true, false, nil
+	}
+	var last error
+	for _, i := range f.order() {
+		if req.Context().Err() != nil {
+			return 0, true, false, req.Context().Err()
+		}
+		r := req
+		if i != at {
+			to := *f.roots[i]
+			u := *req.URL
+			u.Scheme, u.Host, u.User = to.Scheme, to.Host, to.User
+			u.Path, u.RawPath = to.Path+rest, ""
+			r = req.Clone(req.Context())
+			r.URL, r.Host = &u, ""
+		}
+		pin, ok := vouch(r.Context(), f.roots[i], func(ask *http.Request) (*http.Response, error) {
+			return send(ask.WithContext(WithoutFailover(ask.Context())))
+		})
+		if !ok {
+			last = errUnvouched{f.roots[i].Redacted()}
+			continue
+		}
+		return i, true, pin != "" && pin != r.URL.Host, nil
+	}
+	return 0, true, false, last
 }
 
 type tryCapKey struct{}
@@ -174,6 +249,9 @@ func neverConnected(err error) bool {
 // in turn while none takes the connection (WithFailover); ok false when
 // req is for no such remote.
 func failingOver(req *http.Request, send func(*http.Request) (*http.Response, error)) (*http.Response, bool, error) {
+	if off, _ := req.Context().Value(noFailoverKey{}).(bool); off {
+		return nil, false, nil
+	}
 	f, has := req.Context().Value(failoverKey{}).(failover)
 	if !has || req.URL == nil {
 		return nil, false, nil
