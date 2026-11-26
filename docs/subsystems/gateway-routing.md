@@ -1231,7 +1231,7 @@ Each vendor is sent its own request:
 | ChatGPT account (Codex backend), SenseNova U1 | JSON | JSON `images: [{"image_url"}]`, `mask: {"image_url"}` | none |
 | Grok subscription | JSON with `aspect_ratio` | JSON `/images/edits`, `images: [{"url"}]` | `/videos/generations`: `duration`, `aspect_ratio`, `resolution`, `image`, `reference_images` |
 | Volcengine Ark (`isArk`) | `/images/generations`, `watermark: false` unless sent, one request per image, ratio as the doc's 2K size, the caller's other fields as sent (`stream: true` is a 400 pointing to the native route) | the same endpoint, images as JSON `image` (URL or data URL); a mask is a 400 that says to describe it in the prompt | Seedance at `/contents/generations/tasks` (below) |
-| Gemini at Google, a Google sign-in | `generateContent` asking for images | the images as inline parts | a plugin's Veo through its fetch |
+| Gemini at Google, a Google sign-in | `generateContent` asking for images | the images as inline parts | a plugin's Veo through its fetch; Gemini Omni through Interactions |
 | Gemini on Google Vertex AI (`vertexGeminiDrawer`: a Gemini model, not a partner model, Claude or an Imagen; a `google/` or `models/` before the id dropped) | `generateContent` asking for images at the project's `…/publishers/google/models/<model>:generateContent` (`VertexWholePath`), signed as its chat is: the Google token, or an express-mode key in `x-goog-api-key` at the global endpoint, whose drawers are its Gemini image models alone. Never Vertex AI's OpenAI-compatible chat completions, which drew nothing (#7263, `TestVertexGeminiImageDrawsOnGenerateContent`, `TestVertexGeminiDrawOnlyForVertex`) | the images as inline parts | none |
 | OpenRouter | `/images` for image-only models, chat with modalities for the others | `input_references` | none |
 | DashScope, ModelScope | their own asynchronous image APIs (`draw_dashscope.go`, `draw_modelscope.go`) | their image fields | a Token Plan's Wan 3.0 and HappyHorse at `/api/v1/services/aigc/video-generation/video-synthesis` (below); none for ModelScope |
@@ -1263,6 +1263,24 @@ fingerprint (`customVideoID`, `markedKey`), so a poll and its download go
 on the key that started the video. A gateway key's account and model holds
 apply to all three routes (`videoAsker`, `videoModelHeld`), and to Grok's
 and Volcengine's polls and downloads as well.
+
+A Google Gemini API key's `gemini-omni-*` models are video models
+(`geminiOmniVideomakersOf`), and `/v1/videos` makes them through the
+Interactions API ([`video_gemini.go`](../../internal/gateway/video_gemini.go)):
+`POST <Gemini base>/interactions` with the prompt and images as `input`,
+`background: true`, `store: true`, `stream: false`, and
+`response_format.type: video`; `seconds` becomes `duration` (`3s` to
+`15s`), `size` becomes `aspect_ratio` (`16:9` or `9:16`) and `resolution`
+(`360p`, `720p`, `1080p` or `4k`). The video id carries the interaction id
+and the key's mark, so `GET /v1/videos/<id>` polls
+`GET <Gemini base>/interactions/<id>?stream=false` on the same key. The
+last `model_output.content[]` with `type: "video"` is the result; only
+`status: "completed"` with its base64 `data` is complete. `/content`
+decodes that data, and the model is not sent to an OpenAI-shaped videos
+endpoint.
+`TestGeminiOmniVideoUsesInteractions`,
+`TestGeminiOmniRefusesWhatTheModelCannotTake`,
+`TestGeminiOmniReadsTheLastVideoAndNeedsItsData`.
 
 Volcengine Ark has no OpenAI-shaped videos API, so no Ark key is asked at
 `<base>/videos` (`filmsOpenAI` is false for `isArk`). Its Seedance models go

@@ -40,6 +40,8 @@ import (
 // to: <cli-chat-proxy.grok.com/v1>/videos/generations starts one and answers
 // with its request_id. Volcengine Agent Plan uses Ark's asynchronous content
 // generation tasks under its /api/plan/v3 base.
+// A Google Gemini API key's gemini-omni-* models use the Interactions API
+// (video_gemini.go).
 //
 // Another magpie's videos (a Remote magpie's, #545) are asked of it, at its
 // own videos API: its id for one goes, encoded, in the id given here, and
@@ -90,7 +92,7 @@ func VideomakersOf(p provider.Provider, avail func() []catalog.Model) []catalog.
 		return minimaxVideomakers(p)
 	}
 	if !drawsGrok(p) {
-		return customVideomakersOf(p, avail)
+		return append(customVideomakersOf(p, avail), geminiOmniVideomakersOf(p, avail)...)
 	}
 	out := slices.Clone(grokVideoModels)
 	for i := range out {
@@ -170,7 +172,10 @@ func customVideomakersOf(p provider.Provider, avail func() []catalog.Model) []ca
 			out = append(out, kindModel(p, id))
 		}
 	}
-	return slices.DeleteFunc(out, func(m catalog.Model) bool { return p.ModelKind(m.ID) == provider.KindImage })
+	out = slices.DeleteFunc(out, func(m catalog.Model) bool {
+		return p.ModelKind(m.ID) == provider.KindImage || makesGeminiOmniVideo(p, m.ID)
+	})
+	return out
 }
 
 // videoBase is the root of the OpenAI-shaped videos API of another magpie
@@ -253,7 +258,7 @@ func markedKey(p provider.Provider, by string) (provider.Provider, bool) {
 		return p, by == "0"
 	}
 	for _, k := range p.KeysOn() {
-		if q := p.WithKey(k); keyMark(q) == by && (videoBase(q) != "" || filmsMiniMax(q)) {
+		if q := p.WithKey(k); keyMark(q) == by && (videoBase(q) != "" || filmsMiniMax(q) || geminiInteractions(q)) {
 			return q, true
 		}
 	}
@@ -929,6 +934,18 @@ func videoMaker(id string) (p provider.Provider, vendorID string, started time.T
 		}
 		return q, vendorID, started, nil
 	}
+	if ferr == nil {
+		if _, omni := geminiInteractionID(vendorID); omni {
+			if !geminiInteractions(*found) {
+				return p, "", started, fmt.Errorf("no provider %q makes Gemini Omni videos here", pid)
+			}
+			q, ok := markedKey(*found, by)
+			if !ok {
+				return p, "", started, fmt.Errorf("this video was started with a key of %s that is no longer on: turn it back on to get the video", found.Name)
+			}
+			return q, vendorID, started, nil
+		}
+	}
 	if ferr == nil && !drawsGrok(*found) && !found.IsRemoteMagpie() && len(found.PlanVideos()) == 0 && len(customVideomakers(*found)) > 0 {
 		// asked on the key that started it
 		q, ok := markedKey(*found, by)
@@ -1245,11 +1262,19 @@ func (s *Server) videosCreate(w http.ResponseWriter, r *http.Request) {
 	call.Millis, call.Status = time.Since(start).Milliseconds(), code
 	var started map[string]any
 	theirs := ""
+	var geminiState geminiVideoResult
 	if err == nil {
 		json.Unmarshal(b, &started)
 		if theirs, _ = started[field].(string); theirs == "" {
 			code, err = 502, fmt.Errorf("%s started no video: its answer had no %s", p.Name, field)
 			call.Status = code
+		}
+		if err == nil && v.gemini {
+			geminiState, err = geminiVideoState(b)
+			if err != nil {
+				code, err = 502, fmt.Errorf("%s: %v", p.Name, err)
+				call.Status = code
+			}
 		}
 	}
 	side.end(p, model, call.Status, err, Usage{})
@@ -1279,6 +1304,10 @@ func (s *Server) videosCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, obj)
 		return
 	}
+	if v.gemini {
+		writeJSON(w, 200, videoObject(geminiVideoID(p, theirs, start), p.ID+"/"+model, start, geminiState.state, f))
+		return
+	}
 	id := videoID(p, theirs, start)
 	if onKey {
 		id = strings.TrimSuffix(id, "."+signer(p)) + "." + keyMark(p)
@@ -1293,6 +1322,7 @@ type videoStart struct {
 	answer         []byte
 	field          string // the answer's field naming the vendor's video
 	remote, custom bool
+	gemini         bool
 	asked          bool // a vendor was asked: what it answered is recorded
 	unfit          bool // the model makes no videos: none was asked
 	// onKey: started on one of keys on plans of their own, which its id
@@ -1307,11 +1337,21 @@ type videoStart struct {
 func (s *Server) startVideo(ctx context.Context, r *http.Request, p provider.Provider, model string, f filming) (videoStart, int, error) {
 	// the headers the user gave the video model
 	ctx = provider.WithModel(ctx, p.ID, model)
+	gemini := makesGeminiOmniVideo(p, model)
 	// the provider's other keys to start the video on, when the first
 	// says it doesn't serve the model
 	var keys []candidate
 	onKey := false
-	if !p.IsRemoteMagpie() && filmsCustom(p, model) {
+	if gemini {
+		// Gemini Omni is made by one API key's Interactions, so the video's
+		// id names that key and every poll goes back to it.
+		cs, code, msg := s.onKeys(r, p, model, f.Model)
+		if code != 0 {
+			return videoStart{p: p}, code, errors.New(msg)
+		}
+		p, keys = cs[0].p, cs[1:]
+		onKey = true
+	} else if !p.IsRemoteMagpie() && filmsCustom(p, model) {
 		// at a provider's own videos API: sent on the first key a chat
 		// for the model would go to (#1657), never one whose own list of
 		// models leaves it out, nor one the calling key may not use
@@ -1355,7 +1395,7 @@ func (s *Server) startVideo(ctx context.Context, r *http.Request, p provider.Pro
 			return videoStart{p: p}, 403, errors.New(keyAccountsError(keyWho, f.Model))
 		}
 	}
-	v := videoStart{p: p, remote: p.IsRemoteMagpie(), onKey: onKey}
+	v := videoStart{p: p, remote: p.IsRemoteMagpie(), gemini: gemini, onKey: onKey}
 	volcengine := arkFilms(p, model)
 	if msg := f.arkOnly(); msg != "" && !volcengine && !v.remote {
 		return v, 400, errors.New(msg)
@@ -1365,15 +1405,21 @@ func (s *Server) startVideo(ctx context.Context, r *http.Request, p provider.Pro
 	minimax := !v.remote && !v.custom && makesMiniMaxVideo(p, model)
 	dashscope := !v.remote && !v.custom && !minimax && makesDashScopeVideo(p, model)
 	// any grok-imagine-video*, not only those listed: the vendor's newer ones work before magpie names them
-	if !v.remote && !v.custom && !volcengine && !minimax && !dashscope && !xai && (!drawsGrok(p) || !strings.HasPrefix(model, grokVideoFamily)) {
+	if !v.remote && !v.custom && !v.gemini && !volcengine && !minimax && !dashscope && !xai && (!drawsGrok(p) || !strings.HasPrefix(model, grokVideoFamily)) {
 		v.unfit = true
-		return v, 400, fmt.Errorf(`%s/%s can't make videos: magpie makes videos with a Grok subscription's or an xAI API key's grok-imagine-video, Volcengine Agent Plan's or an Ark key's Seedance models, a MiniMax API key's MiniMax-H3 models, an Alibaba Token Plan's Wan 3.0 and HappyHorse models, another magpie's, and a provider's models its own model list marks "kind": "video" or that you mark a Video model (right-click the model in the provider's editor: Makes…)`, p.ID, model)
+		return v, 400, fmt.Errorf(`%s/%s can't make videos: magpie makes videos with a Google Gemini API key's gemini-omni models, a Grok subscription's or an xAI API key's grok-imagine-video, Volcengine Agent Plan's or an Ark key's Seedance models, a MiniMax API key's MiniMax-H3 models, an Alibaba Token Plan's Wan 3.0 and HappyHorse models, another magpie's, and a provider's models its own model list marks "kind": "video" or that you mark a Video model (right-click the model in the provider's editor: Makes…)`, p.ID, model)
 	}
 	// another magpie is asked at its videos API, which says itself what
 	// it can't make
 	at, field := grokVideosRoot(p)+"/videos/generations", "request_id"
 	var body []byte
 	switch {
+	case v.gemini:
+		var err error
+		if body, err = geminiOmniVideoBody(model, f); err != nil {
+			return v, 400, err
+		}
+		at, field = geminiInteractionsURL(p), "id"
 	case v.remote, v.custom:
 		// a provider's OpenAI-shaped videos API is asked as another
 		// magpie's is: OpenAI's body, its answer its own
@@ -1403,12 +1449,12 @@ func (s *Server) startVideo(ctx context.Context, r *http.Request, p provider.Pro
 	if dashscope {
 		extra = dashScopeAsync
 	}
-	b, code, err := s.sendWith(ctx, p, http.MethodPost, at, "application/json", body, true, extra)
+	b, code, err := s.sendWith(ctx, p, http.MethodPost, at, "application/json", body, !v.gemini, extra)
 	// a key answering 404 that it doesn't serve the model hands it to the
 	// next (#1657), as a drawing does; the id names the key that started it
 	for ; err != nil && len(keys) > 0 && ctx.Err() == nil && (keyLacksModel(code, err) || minimax && minimaxLacksH3(b)); keys = keys[1:] {
 		p = keys[0].p
-		b, code, err = s.sendWith(ctx, p, http.MethodPost, at, "application/json", body, true, extra)
+		b, code, err = s.sendWith(ctx, p, http.MethodPost, at, "application/json", body, !v.gemini, extra)
 	}
 	if dashscope {
 		if err != nil {
@@ -1443,7 +1489,7 @@ func videoAsker(r *http.Request, p provider.Provider) (provider.Provider, string
 	if !held {
 		return p, ""
 	}
-	if !p.IsRemoteMagpie() && (filmsOpenAI(p) || filmsMiniMax(p) || filmsDashScope(p) || isArk(p) && len(customVideomakers(p)) > 0) {
+	if !p.IsRemoteMagpie() && (filmsOpenAI(p) || filmsMiniMax(p) || filmsDashScope(p) || geminiInteractions(p) || isArk(p) && len(customVideomakers(p)) > 0) {
 		if p.Key == "" && p.Account == nil || accountAllowed(who, candidate{p: p}) {
 			return p, ""
 		}
@@ -1504,6 +1550,23 @@ func (s *Server) videosGet(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := drawWithin(r.Context(), videoTimeout)
 	defer cancel()
+	if interaction, omni := geminiInteractionID(vendorID); omni {
+		out, code, err := s.geminiVideoStatus(ctx, p, interaction)
+		if err != nil {
+			writeError(w, provider.Chat, code, err.Error())
+			return
+		}
+		if out.state.Model == "" {
+			writeError(w, provider.Chat, 502, p.Name+" didn't say which model made the video")
+			return
+		}
+		if held := videoModelHeld(r, p, out.state.Model); held != "" {
+			writeError(w, provider.Chat, 403, held)
+			return
+		}
+		writeJSON(w, 200, videoObject(id, p.ID+"/"+out.state.Model, started, out.state, filming{}))
+		return
+	}
 	if filmsOpenAI(p) {
 		obj, model, code, err := s.openAIVideo(ctx, p, vendorID, id)
 		if err != nil {
@@ -1544,6 +1607,10 @@ func (s *Server) videosContent(w http.ResponseWriter, r *http.Request) {
 	p, held := videoAsker(r, p)
 	if held != "" {
 		writeError(w, provider.Chat, 403, held)
+		return
+	}
+	if interaction, omni := geminiInteractionID(vendorID); omni {
+		s.geminiVideoContent(r, w, p, interaction)
 		return
 	}
 	ctx, cancel := drawWithin(r.Context(), videoTimeout)
