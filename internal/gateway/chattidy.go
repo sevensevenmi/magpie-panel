@@ -95,13 +95,14 @@ import (
 //
 // Lines pass whole, as they came, unless one has any of them.
 type chatTidy struct {
-	buf     []byte
-	ids     streamCallIDs
-	indexes streamCallIndexes
-	called  map[int]bool    // the choices that made a call
-	named   map[int]bool    // the choices with a call whose name a client reads
-	seen    map[[2]int]bool // the streamed calls, to know a first fragment
-	bad     map[[2]int]bool // the calls naming no function, with their later fragments
+	buf      []byte
+	ids      streamCallIDs
+	indexes  streamCallIndexes
+	called   map[int]bool    // the choices that made a call
+	named    map[int]bool    // the choices with a call whose name a client reads
+	seen     map[[2]int]bool // the streamed calls, to know a first fragment
+	bad      map[[2]int]bool // the calls naming no function, with their later fragments
+	toolArgs map[[2]int]*toolArgsRepair
 }
 
 var (
@@ -309,7 +310,9 @@ func (t *chatTidy) line(line []byte) []byte {
 				inDelta = true
 			}
 		}
-		if calls, ok := delta["tool_calls"]; ok {
+		var calls json.RawMessage
+		if value, ok := delta["tool_calls"]; ok {
+			calls = value
 			if t.indexes == nil {
 				t.indexes = streamCallIndexes{}
 			}
@@ -342,16 +345,28 @@ func (t *chatTidy) line(line []byte) []byte {
 					inDelta = true
 				}
 				if mended, chg := withoutEmptyNames(calls); chg {
-					delta["tool_calls"] = mended
+					calls, delta["tool_calls"] = mended, mended
 					inDelta = true
 				}
+			}
+		}
+		if calls != nil {
+			if mended, chg := t.repairChatToolArgs(choice, calls); chg {
+				calls, delta["tool_calls"] = mended, mended
+				inDelta = true
+			}
+		}
+		end := string(bytes.TrimSpace(c["finish_reason"]))
+		if end != "" && end != "null" {
+			if _, chg := t.finishChatToolArgs(choice, delta, calls); chg {
+				inDelta = true
 			}
 		}
 		if inDelta {
 			c["delta"], _ = json.Marshal(delta)
 			changed = true
 		}
-		switch end := string(bytes.TrimSpace(c["finish_reason"])); end {
+		switch end {
 		case `"stop"`:
 			if t.called[choice] && t.named[choice] {
 				c["finish_reason"] = json.RawMessage(`"tool_calls"`)
@@ -753,6 +768,8 @@ func (t *chatWhole) flush() []byte {
 		// it (#1475)
 		dropped := wholeNameless(msg)
 		mended = dropped || mended
+		// a bare string value in a call's arguments (#7772)
+		mended = repairWholeChatToolArgs(msg) || mended
 		if wrote, called := wholeTextCalls(msg, t.names); wrote {
 			if called {
 				c["finish_reason"] = json.RawMessage(`"tool_calls"`)

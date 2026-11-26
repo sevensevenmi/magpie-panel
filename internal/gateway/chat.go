@@ -1281,7 +1281,8 @@ type chatDecoder struct {
 	tool      int       // index of the open tool call, -1 for none
 	toolID    string    // id of the open tool call, as some relays repeat it on every fragment
 	toolWhole jsonWhole // where the open call's arguments stand in their JSON
-	toolDone  bool      // they are whole JSON: a call that starts now comes after it
+	argRepair toolArgsRepair
+	toolDone  bool // they are whole JSON: a call that starts now comes after it
 	held      []*heldCall
 	choice    string // index of the first choice seen; an empty string means none yet
 	// Gemini's OpenAI-compatible API, asked for thoughts, may give them
@@ -1493,6 +1494,7 @@ func (d *chatDecoder) end(emit func(Event)) {
 
 func (d *chatDecoder) decode(data string, emit func(Event)) error {
 	if strings.TrimSpace(data) == "[DONE]" {
+		d.finishToolArgs(emit)
 		d.giveHeld(emit)
 		return nil
 	}
@@ -1598,6 +1600,7 @@ func (d *chatDecoder) decode(data string, emit func(Event)) error {
 		}
 		if c.FinishReason != "" {
 			d.end(emit)
+			d.finishToolArgs(emit)
 			d.giveHeld(emit)
 			emit(Event{Kind: KStop, Stop: stopFromChat(c.FinishReason)})
 		}
@@ -1647,7 +1650,7 @@ func (d *chatDecoder) toolCall(idx int, tc cToolCall, emit func(Event)) {
 		d.held = append(d.held, h)
 		return
 	}
-	d.tool, d.toolID, d.toolWhole, d.toolDone = idx, tc.ID, jsonWhole{}, false
+	d.tool, d.toolID, d.toolWhole, d.argRepair, d.toolDone = idx, tc.ID, jsonWhole{}, toolArgsRepair{}, false
 	emit(Event{Kind: KToolStart, ID: sent, Name: tc.Function.Name})
 	d.toolArgs(args, emit)
 }
@@ -1658,7 +1661,17 @@ func (d *chatDecoder) toolArgs(args string, emit func(Event)) {
 		return
 	}
 	d.toolDone = d.toolWhole.feed(args)
-	emit(Event{Kind: KToolArgs, Text: args})
+	if mended := d.argRepair.feed(args); mended != "" {
+		emit(Event{Kind: KToolArgs, Text: mended})
+	}
+}
+
+// finishToolArgs gives the open call's held bare value before its stop.
+func (d *chatDecoder) finishToolArgs(emit func(Event)) {
+	if tail := d.argRepair.finish(); tail != "" {
+		emit(Event{Kind: KToolArgs, Text: tail})
+	}
+	d.argRepair = toolArgsRepair{}
 }
 
 // giveHeld gives the calls held, each whole, in index order.
@@ -1670,10 +1683,11 @@ func (d *chatDecoder) giveHeld(emit func(Event)) {
 	for _, h := range d.held {
 		emit(Event{Kind: KToolStart, ID: h.sent, Name: h.name})
 		if h.args.Len() > 0 {
-			emit(Event{Kind: KToolArgs, Text: h.args.String()})
+			args, _ := repairToolArgs(h.args.String())
+			emit(Event{Kind: KToolArgs, Text: args})
 		}
 	}
-	d.held, d.tool, d.toolID, d.toolWhole, d.toolDone = nil, -1, "", jsonWhole{}, false
+	d.held, d.tool, d.toolID, d.toolWhole, d.argRepair, d.toolDone = nil, -1, "", jsonWhole{}, toolArgsRepair{}, false
 }
 
 // chatChoiceIndex accepts numeric indexes and numeric strings without
