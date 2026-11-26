@@ -253,6 +253,7 @@ func readJev(b []byte, intents []string, levels bool, prev before) (verdict, err
 	var out struct {
 		Model   string `json:"model"`
 		Answers map[string]struct {
+			Type          string         `json:"type"`
 			Choice        string         `json:"choice"`
 			Score         float64        `json:"score"`
 			Confidence    float64        `json:"confidence"`
@@ -265,6 +266,14 @@ func readJev(b []byte, intents []string, levels bool, prev before) (verdict, err
 	}
 	if err := decodeJSON(b, &out); err != nil {
 		return verdict{}, answerError{fmt.Errorf("not a System One answer")}
+	}
+	// a question the model declined (OpenAI's Decisions API answers it
+	// {"type":"refusal"}) is no answer: never "none of these" or the
+	// lowest effort, which its empty choice and zero score would read as
+	for k, a := range out.Answers {
+		if a.Type == "refusal" {
+			delete(out.Answers, k)
+		}
 	}
 	var v verdict
 	if a, ok := out.Answers["intent"]; ok && len(intents) > 0 && !levels {
@@ -633,6 +642,15 @@ func (s *Server) serveSystemOneBody(w http.ResponseWriter, r *http.Request, body
 	if keyWho, held := keyHolds(r); held && !modelAllowed(keyWho, p, model) {
 		st, msg := keyModelRefusal(w, keyWho, p.ID+"/"+model)
 		writeError(w, provider.Chat, st, msg)
+		return
+	}
+	// audio goes only to a model that reads it (#7790): any other is
+	// told so, never asked the question without what it was about
+	if audio, msg := systemOneAudio(body); msg != "" {
+		writeError(w, provider.Chat, http.StatusBadRequest, msg)
+		return
+	} else if audio && !(systemOneTarget{p, model}).takesAudio() {
+		writeError(w, provider.Chat, http.StatusBadRequest, noAudioError(asked))
 		return
 	}
 	// its keys or accounts in its routing's order, each asked until one

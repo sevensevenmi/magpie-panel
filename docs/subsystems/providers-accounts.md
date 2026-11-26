@@ -236,16 +236,45 @@ Google's Decisions API (`POST /v1beta/decisions`, `ViaGoogle`) serves
 `gemini-decision-1` on the same key, which goes as `x-goog-api-key`
 (`DecideProtocol`), never as a Bearer token. Google takes System One's
 questions as they are, with a choice's undescribed option as `""` and a
-`noul` question's short `true`/`false` criteria sent as Google's
-`true_description`/`false_description`; the
-state goes as `input`, a string as it is and an object as its JSON text
-(an object would be read as a content block), and the images as image
-blocks after it (`googleAsk`). The answer's usage
+noul's `true`/`false` criteria as Google's `true_description` and
+`false_description` (google-genai's `NoulCriteria`; #7789); the state goes
+as `input`, a string as it is and an object as its JSON text (an object
+would be read as a content block), and the request's `images` and `audio`
+as image and audio blocks after it, a data: URL's bytes as `data` with its
+`mime_type`, another URL as `uri` (`googleAsk`, `googleBlock`; #7790).
+`/v1/systemone` sends `audio` only to a model that takes it (Google's, or
+another magpie); any other is a 400 that says so, and a decision group
+asks only its members that take it. Google's decision model is in no
+key's own list of models (they are picked from the chat models), so such
+a list never bars it (`decisionUnlisted` in `AccountServes`, Bailian's
+and Ark's alike; #7788). The answer's usage
 (`total_input_tokens`/`total_output_tokens`) comes back as System One's,
 and a `prompt_feedback.block_reason` with no answers is a 400 saying why
 (`DecideResult`). Before, `google/gemini-decision-1` fell to OpenRouter's
 decision list. `TestGoogleDecideWire`, `TestGoogleKeyDecides`,
-`TestGoogleSystemOne`, `TestGoogleDecisionsTakesImages`.
+`TestGoogleSystemOne`, `TestGoogleDecisionsTakesImages`,
+`TestGoogleDecisionKeyLists`, `TestSystemOneAudio`.
+A routing rule's classifier set to an OpenAI API key's `gpt-6-luna`
+(`api.openai.com`; not Azure, a relay listing the id, a ChatGPT sign-in, a
+plugin, another magpie or a provider with a decision API of its own) is
+asked at OpenAI's Decisions API, `POST /v1/decisions` (`OpenAIDecider`,
+`ViaOpenAI`; zyh6036 on X), where before it was asked through chat. Only
+the classifier changes: the provider gets no `Decide`, so `gpt-6-luna`
+stays a chat model in agents, groups and the catalog, `/v1/decisions` goes
+straight to OpenAI as before, and `/v1/systemone` still reaches it through
+`systemOneByDecisions`. `askClassifierIn` sends it to `askDecider`, and
+`decideKeys` turns each of the key's candidates into a decider at the
+key's own base; the key goes as a Bearer token. Jev's System One request
+goes as `SystemOneAsDecisions` makes it (noul as `predicate`, choice and
+score with `choices` and `levels`, the state as an `input_json` part of a
+user message) and the answer comes back as `DecisionAsSystemOne` reads it
+(`DecideAsk`, `DecideAnswer`), both moved from the gateway to
+`decisions_wire.go`. A question OpenAI declines (`{"type":"refusal"}`) is
+no answer (`readJev`): never "none of these" or the lowest effort. Its
+usage is the routing classifier's own, priced at gpt-6-luna's catalog rate
+with cached tokens counted as input. `TestOpenAIDecider`,
+`TestOpenAIDecisionsWire`, `TestOpenAIDecisionsClassify`,
+`TestOpenAIDecisionsRefusal`, `TestOpenAIDecisionsOnlyLuna`.
 Refresh replaces the list: removed decisions stop routing, and an empty
 remote list never gains a fabricated Jev alias.
 An older peer without the decision-list extension continues serving its
@@ -350,6 +379,27 @@ names supplied by the provider stay as supplied. Models picked by the user
 that the upstream does not list are named against all listed names and ids;
 listed models keep their `Available` names unchanged
 ([`Exposed`](../../internal/provider/models.go)).
+
+The provider editor draws a provider's models by maker, the newest first
+(WJaunita45604 on X). `/api/providers` gives each model its `maker`: the
+logo the agents' pickers draw by it (`agent.ModelIcon` on its id, else its
+name; `named` in [`providers.go`](../../internal/gui/providers.go)), empty
+for one magpie doesn't know. [`modelorder.js`](../../internal/gui/assets/modelorder.js),
+imported with advgroups.js as the Providers page first draws (which the
+editor waits for, #7051), puts each maker's models under its
+name (Anthropic, OpenAI, Google, DeepSeek, xAI, Qwen, Moonshot AI, Zhipu,
+MiniMax, Mistral, Xiaomi, StepFun, then Other), a plain small label, and
+none when the list has one maker. Other keeps the vendor's order, since
+its numbers belong to different makers; so does a list magpie can place
+no model of. Within a maker the version in the name
+shown (else the id) decides, read as `catalog.FamilyOf` reads it and
+compared number by number (5.10 over 5.9, 5 over 4.8), a release before
+its preview, the alias before its dated snapshots, a later snapshot first,
+the vendor's order between the rest. Only the order drawn changes: with
+none picked the vendor's first 24 are still the ones served, and the
+agents' pickers keep their own order (#2106, #5980). A new logo in
+`byFamily` needs a maker there (`TestEveryModelMakerIsNamedInTheEditor`;
+`TestProviderModelsSayTheirMaker`, `model-makers.test.cjs`).
 
 A relay the user added by its address (`AddedByAddress`, and not Azure,
 Bedrock, Vertex or a Remote magpie) that lists one model once per effort,

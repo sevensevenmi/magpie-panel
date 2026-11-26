@@ -18,35 +18,32 @@ import (
 
 // AccountServes says whether the account or key ref (a signed-in
 // account's name, a key's KeyID) is let serve model: true when it has no
-// list of its own, for a model Codex calls by itself that no list can hold
-// (codexOwnHidden), and for a decision-only model its account model picker
-// cannot list.
+// list of its own, and for a model no list can hold: one Codex calls by
+// itself (codexOwnHidden), or the vendor's own decision model beside its
+// chat models (decisionUnlisted).
 //
 // A model the user lists by an id of theirs (SetModelID) is in the list
 // by that id, or by the vendor's own one a list kept from before has.
 func (p Provider) AccountServes(ref, model string) bool {
 	ms, ok := p.AccountModels[accountKey(ref)]
-	if !ok || len(ms) == 0 || slices.Contains(ms, model) || codexOwnHidden(p, model) || hiddenDecisionModel(p, model) {
+	if !ok || len(ms) == 0 || slices.Contains(ms, model) || codexOwnHidden(p, model) || p.decisionUnlisted(model) {
 		return true
 	}
 	own := p.OwnModelID(model)
 	return own != model && slices.Contains(ms, own)
 }
 
-// hiddenDecisionModel says model is one p decides with alone and cannot list
-// in an account's model picker. A decision model that is available to list,
-// such as Jev, stays subject to an account's explicit list.
-func hiddenDecisionModel(p Provider, model string) bool {
-	if !p.OnlyDecides(model) {
-		return false
-	}
-	own := p.OwnModelID(model)
-	for _, m := range p.Available() {
-		if m.ID == model || p.OwnModelID(m.ID) == own {
-			return false
-		}
-	}
-	return true
+// decisionUnlisted says model is the decision model a vendor serves on
+// the same key beside its chat models (Google's gemini-decision-1,
+// Bailian's and Ark's, vendorDecision) that holds no conversation. A
+// key's own list is picked from the chat models, which never name it
+// (Google lists it for createDecision alone, and magpie keeps the
+// generateContent ones), so a list of any key's barred it on every key:
+// google/gemini-decision-1 was a 403 telling the user to add it to a
+// key's models, which no editor could (bunnybit0121 on X, #7788).
+func (p Provider) decisionUnlisted(model string) bool {
+	m, ok := vendorDecision(p.Decide)
+	return ok && model == m.ID && p.bailianApart() && p.OnlyDecides(model)
 }
 
 // codexOwnHidden says model is one a Codex account serves that its list
