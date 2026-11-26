@@ -100,8 +100,13 @@ func TestDevinReasoningWithoutPlaceholder(t *testing.T) {
 		"qoder":                    {"first", noReasoning},
 		"qoder-cn":                 {"first", noReasoning},
 		"api.openai.com":           {nil, nil},
-		"cursor":                   {nil, nil},
-		"api.moonshot.cn":          {nil, nil},
+		// Cursor's and WorkBuddy's plugins replay a turn's reasoning too
+		// (#7745), but still get no placeholder for a tool turn that had
+		// none.
+		"cursor":          {"first", nil},
+		"workbuddy":       {"first", nil},
+		"workbuddy-ai":    {"first", nil},
+		"api.moonshot.cn": {nil, nil},
 	} {
 		if got := reasoning(host); !jsonEqual(got, want) {
 			t.Errorf("%s: reasoning_content %q, want %q", host, got, want)
