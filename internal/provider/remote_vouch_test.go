@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -133,5 +136,97 @@ func TestRemoteMagpieNameProvesAtItsAddress(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "did not prove") {
 		t.Fatalf("err %v; want it to say the address didn't prove", err)
+	}
+}
+
+// A provider proxy answers an address it can't reach with its own 502.
+// That is not the remote's answer: nothing keyed goes to it, and the
+// other address that proves is asked instead.
+func TestRemoteMagpieProxyDoesNotSendKeyToUnreachableAddress(t *testing.T) {
+	azureHome(t)
+	dialsOut(t)
+	const key = "sk-magpie-office"
+	const unreachable = "192.168.255.254"
+	const fallbackHost = "10.20.30.40"
+	var mu sync.Mutex
+	keys := map[string][]string{}
+	asked := map[string]int{}
+	var fallbackKeys []string
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == RemoteProvePath {
+			var in struct {
+				Nonce string `json:"nonce"`
+				KeyID string `json:"key_id"`
+			}
+			json.NewDecoder(r.Body).Decode(&in)
+			if in.KeyID != RemoteKeyID(key) {
+				http.Error(w, "no such key", http.StatusNotFound)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"proof": hex.EncodeToString(RemoteProof(key, in.Nonce, fallbackHost+":80"))})
+			return
+		}
+		if sent := r.Header.Get("Authorization") + "\n" + r.Header.Get("X-Api-Key"); strings.TrimSpace(sent) != "" {
+			mu.Lock()
+			fallbackKeys = append(fallbackKeys, sent)
+			mu.Unlock()
+		}
+		if r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"data":[]}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(fallback.Close)
+	fallbackURL, err := url.Parse(fallback.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallbackProxy := httputil.NewSingleHostReverseProxy(fallbackURL)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := r.URL.Hostname()
+		if target == "" {
+			target = r.Host
+		}
+		mu.Lock()
+		asked[target]++
+		mu.Unlock()
+		if sent := r.Header.Get("Authorization") + "\n" + r.Header.Get("X-Api-Key"); strings.TrimSpace(sent) != "" {
+			mu.Lock()
+			keys[target] = append(keys[target], sent)
+			mu.Unlock()
+		}
+		if target == fallbackHost {
+			fallbackProxy.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "the proxy could not reach it", http.StatusBadGateway)
+	}))
+	t.Cleanup(proxy.Close)
+	if err := Save(Provider{ID: "office", Name: "Office", Preset: RemoteMagpiePreset, Key: key,
+		Chat: "http://" + unreachable, Addresses: []string{"http://" + fallbackHost}, Proxy: proxy.URL}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Find("office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := remoteBody(context.Background(), *p, "GET", "/v1/models", seekAnswer); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	atPrimary := append([]string(nil), keys[unreachable]...)
+	probes := asked[unreachable]
+	atFallback := append([]string(nil), fallbackKeys...)
+	mu.Unlock()
+	if probes == 0 {
+		t.Fatal("the proxy wasn't asked to reach the unreachable address")
+	}
+	if len(atPrimary) > 0 {
+		t.Fatalf("the unreachable address was sent %q", atPrimary)
+	}
+	if len(atFallback) != 1 || !strings.Contains(atFallback[0], key) {
+		t.Fatalf("the address that proved was sent %q; want its key once", atFallback)
 	}
 }
